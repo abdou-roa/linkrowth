@@ -2,9 +2,9 @@
 
 > **Earn your complexity.** Start with one prompt. Add the next layer only when the current one visibly fails.
 
-An AI engagement agent for LinkedIn (and later X) — built in public, one layer at a time.
+Imagine opening LinkedIn to find a prioritized queue of posts worth your time — each one already paired with a draft comment that sounds like you, signals your expertise, and is tailored to the person you're trying to reach. No hunting, no generic replies, no forgetting who you've already talked to. Just a daily shortlist of high-leverage conversations, ready to ship.
 
-Linkrowth helps you identify posts worth engaging with, drafts substantive comments aligned with a defined goal, and over time learns your voice, your network, and what actually builds authority. The project is also a content series: *From One Prompt to a Fully Architected Agent System* — every engineering milestone is an episode.
+That's the end state. This repo is how we get there — one visible failure at a time.
 
 ---
 
@@ -53,7 +53,7 @@ Each layer earns its place by fixing a visible failure in the one before it.
 
 - **In:** a LinkedIn post (pasted via CLI)
 - **Out:** one suggested comment + one-line rationale
-- **Brain:** single Claude API call, system prompt encodes the goal rubric
+- **Brain:** single LLM API call, system prompt encodes the goal rubric
 - **Deliberately absent:** no voice, no triage, no memory, no self-critique, no feed access
 
 The baseline is *intentionally naive*. That's the point.
@@ -63,7 +63,7 @@ The baseline is *intentionally naive*. That's the point.
 ## Tech stack
 
 - **Language:** TypeScript
-- **AI:** Claude API (thin custom SDK — no framework until the architecture earns one)
+- **AI:** LLM API (no framework until the architecture earns one)
 - **Surface v1:** CLI
 - **Surface v2 (planned):** Browser extension (same core, new consumer)
 
