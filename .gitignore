@@ -1,1 +1,8 @@
 docs/
+config/user.json
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+!.env.example

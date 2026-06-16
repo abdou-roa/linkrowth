@@ -60,6 +60,48 @@ The baseline is *intentionally naive*. That's the point.
 
 ---
 
+## Quick start
+
+**Requirements:** Node.js 18+, an OpenAI or Gemini API key.
+
+```bash
+git clone <repo-url> && cd linkrowth
+npm install
+
+cp config/user.example.json config/user.json   # edit niche, positioning, audience
+cp .env.example .env                           # add OPENAI_API_KEY (or GEMINI_API_KEY)
+
+npm run build
+npm run engage
+```
+
+Paste a LinkedIn post at the prompt, or pipe one in:
+
+```bash
+echo "Your post text here…" | npm run engage
+```
+
+**Output:**
+
+```
+Suggestion:
+[comment draft]
+
+Why:
+[one-line rationale]
+```
+
+Swap providers via `.env`:
+
+```
+LINKROWTH_PROVIDER=openai   # default — gpt-4o-mini
+LINKROWTH_PROVIDER=gemini   # gemini-2.5-flash
+```
+
+Full Episode 1 spec: [`docs/EPISODE-1.md`](docs/EPISODE-1.md) · Architecture: [`docs/SPEC.md`](docs/SPEC.md)
+
+---
+
 ## Tech stack
 
 - **Language:** TypeScript
