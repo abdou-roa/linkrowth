@@ -1,0 +1,87 @@
+# Linkrowth code structure
+
+> Working reference. Canonical detail lives in `SPEC.md` §8.
+
+## Tree (Episode 1 target)
+
+```
+linkrowth/
+├── src/
+│   ├── engage.ts        # core engage() — stable public API
+│   ├── cli.ts           # thin CLI consumer of engage()
+│   ├── prompts.ts       # typed prompt builders; no API calls
+│   ├── llm.ts           # provider-agnostic call(); routes via env
+│   ├── types.ts         # Post, UserContext, EngageResult, LlmRequest, …
+│   ├── config/
+│   │   └── env.ts       # .env loading, provider selection, API keys
+│   └── clients/
+│       ├── claude.ts    # Anthropic — stub until needed
+│       ├── gpt.ts       # OpenAI — Episode 1 default
+│       ├── gemini.ts    # Google Gemini — implemented
+│       └── kimi.ts      # Kimi / Moonshot — stub until needed
+├── config/
+│   ├── user.json        # gitignored
+│   └── user.example.json
+├── package.json
+├── tsconfig.json
+└── README.md
+```
+
+## Data flow
+
+```
+cli.ts
+  └─► engage.ts
+        ├─► types.ts
+        ├─► prompts.ts     buildEngagePrompt(post, context)
+        └─► llm.ts         call(request)
+              └─► clients/gpt.ts       (Episode 1 default)
+              └─► clients/gemini.ts
+              └─► clients/claude.ts    (future)
+              └─► clients/kimi.ts     (future)
+```
+
+## Module rules
+
+| Module | Owns | Must not |
+|---|---|---|
+| `engage.ts` | orchestration: context → prompt → LLM → result | provider SDKs, prompt strings |
+| `prompts.ts` | `{ system, user }` builders | API calls, side effects |
+| `llm.ts` | `call()` entry, provider routing, shared defaults | HTTP, SDK imports |
+| `clients/*.ts` | one provider's SDK/HTTP + `call()` | business logic, prompts |
+| `cli.ts` | stdin/argv, print output | anything else |
+| `types.ts` | shared interfaces | implementation |
+
+## Client contract
+
+Every file in `clients/` exports the same shape:
+
+```typescript
+import type { LlmRequest } from "../types";
+
+export async function call(request: LlmRequest): Promise<string>
+```
+
+`llm.ts` is the only module that imports from `clients/`.  
+`engage.ts` and above import `call` from `llm.ts` only.
+
+## Episode 1 scope
+
+- Ship `clients/gpt.ts` and `clients/gemini.ts`
+- `claude.ts` / `kimi.ts` remain stubs until a provider switch is needed
+- Provider selection via `LINKROWTH_PROVIDER` in `.env` (see `.env.example`)
+- Only the active provider's API key is required at runtime
+- `validateEnv()` runs at CLI startup for fail-fast errors
+
+## Environment variables
+
+Copy `.env.example` to `.env` (never commit `.env`):
+
+| Variable | Required | Description |
+|---|---|---|
+| `LINKROWTH_PROVIDER` | No | `openai` (default), `gemini`, `anthropic`, `kimi` |
+| `OPENAI_API_KEY` | If provider=openai | OpenAI API key |
+| `GEMINI_API_KEY` | If provider=gemini | Google AI Studio key |
+| `ANTHROPIC_API_KEY` | If provider=anthropic | Anthropic API key |
+| `KIMI_API_KEY` | If provider=kimi | Moonshot / Kimi API key |
+| `LINKROWTH_*_MODEL` | No | Override default model per provider |
