@@ -9,7 +9,12 @@ export interface UserContext {
   niche: string;
   positioning: string;
   targetAudience: string;
+  background?: string;
+  proofPoints?: string[];
+  opinions?: string[];
+  avoid?: string[];
   voiceSamples?: string[];
+  voiceNotes?: string;
 }
 
 export interface EngageResult {
