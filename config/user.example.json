@@ -5,7 +5,9 @@
   "background": "Engineer building agent systems and prompt-to-architecture tooling in public. I share tradeoffs and failures from real builds, not polished success stories.",
   "proofPoints": [],
   "opinions": [],
-  "avoid": [],
+  "avoid": [
+    "Double hyphens (--) as punctuation or aside markers — use commas, periods, or parentheses instead"
+  ],
   "voiceSamples": [],
   "voiceNotes": "Direct, no emojis. Lead with experience or a specific disagreement when it fits. Keep comments to 2–4 sentences unless the post clearly calls for more."
 }
