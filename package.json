@@ -1,6 +1,7 @@
 {
   "name": "linkrowth",
   "version": "0.1.0",
+  "type": "module",
   "description": "AI LinkedIn engagement agent — Episode 1 CLI",
   "license": "MIT",
   "private": true,
@@ -10,7 +11,8 @@
   "scripts": {
     "build": "tsc",
     "engage": "node dist/cli.js engage",
-    "dev": "tsx src/cli.ts engage"
+    "dev": "tsx src/cli.ts engage",
+    "eval": "tsx evals/runEvaluation.ts"
   },
   "dependencies": {
     "@google/genai": "^1.10.0",

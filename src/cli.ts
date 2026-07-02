@@ -37,6 +37,8 @@ async function runEngage(): Promise<void> {
   const text = await readPostFromStdin();
   const result = await engage({ text });
 
+  console.log("\nCategory:");
+  console.log(result.category);
   console.log("\nSuggestion:");
   console.log(result.suggestion);
   console.log("\nWhy:");

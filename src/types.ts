@@ -18,6 +18,11 @@ export interface UserContext {
 }
 
 export interface EngageResult {
+  category?: string;
+  coreSubject?: string;
+  appliedPlaybook?: string;
+  valueHook?: string;
+  voiceCheck?: string;
   suggestion: string;
   rationale: string;
 }
@@ -27,6 +32,7 @@ export interface LlmRequest {
   user: string;
   model?: string;
   maxTokens?: number;
+  max_completion_tokens?: number;
 }
 
 export interface LlmPrompt {
