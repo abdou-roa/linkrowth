@@ -1,5 +1,5 @@
 import type { LlmRequest } from "../types";
 
-export async function call(_request: LlmRequest): Promise<string> {
+export async function call(_request: LlmRequest, isEval = false): Promise<string> {
   throw new Error("Anthropic client not implemented");
 }

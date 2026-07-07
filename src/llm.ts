@@ -5,14 +5,14 @@ import { call as gptCall } from "./clients/gpt";
 import { call as kimiCall } from "./clients/kimi";
 import type { LlmProvider, LlmRequest } from "./types";
 
-const handlers: Record<LlmProvider, (request: LlmRequest) => Promise<string>> = {
+const handlers: Record<LlmProvider, (request: LlmRequest, isEval: boolean) => Promise<string>> = {
   openai: gptCall,
   gemini: geminiCall,
   anthropic: claudeCall,
   kimi: kimiCall,
 };
 
-export async function call(request: LlmRequest): Promise<string> {
+export async function call(request: LlmRequest, isEval = false): Promise<string> {
   const { provider } = getActiveProviderConfig();
-  return handlers[provider](request);
+  return handlers[provider](request, isEval);
 }

@@ -34,7 +34,7 @@ export async function runToneJudge(input: ToneJudgeInput): Promise<JudgeResult>
   };
 
   try{
-    const resp = await call(request);
+    const resp = await call(request, true);
     const judgeResult: JudgeResult = JSON.parse(resp);
     return judgeResult;
   }catch (error) {

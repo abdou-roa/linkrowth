@@ -15,7 +15,7 @@ function getClient(): GoogleGenAI {
   return ai;
 }
 
-export async function call(request: LlmRequest): Promise<string> {
+export async function call(request: LlmRequest, isEval = false): Promise<string> {
   const { defaultModel } = getProviderConfig("gemini");
   const response = await getClient().models.generateContent({
     model: request.model ?? defaultModel,

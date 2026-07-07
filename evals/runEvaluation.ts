@@ -39,6 +39,12 @@ async function runEvaluation(): Promise<void>
     return;
   }
 
+  const totalCases = dataset.length;
+
+  let passedCategoryCount = 0;
+  let passedToneJudgeCount = 0;
+  let passedAiToneJudgeCount = 0;
+
   for (const test_case of dataset) {
     const EngageResult = await engage({ text: test_case.postText }, userConfig);
 
@@ -50,23 +56,25 @@ async function runEvaluation(): Promise<void>
 
     try{
       const categoryJudegeResult = EngageResult.category === test_case.category;
-      const toneJudgeResult = await runToneJudge(input);
-      const aiToneJudgeResult = await runAiToneJudge(input);
+      categoryJudegeResult ? passedCategoryCount++ : null;
 
-      console.log("\n____________________Evaluation Result____________________");
-      console.log(categoryJudegeResult ? "Category Judge: PASS" : "Category Judge: FAIL");
-      console.log("\n")
-      console.log(toneJudgeResult.pass ? "Tone Judge: PASS" : "Tone Judge: FAIL");
-      console.log("Tone Judge Reasoning:", toneJudgeResult.reasoning);
-      console.log("\n")
-      console.log(aiToneJudgeResult.pass ? "AI Tone Judge: PASS" : "AI Tone Judge: FAIL");
-      console.log("AI Tone Judge Reasoning:", aiToneJudgeResult.reasoning);
-      console.log("_______________________________________________________\n\n\n")
-      console.log("_______________________________________________________\n\n\n")
+      const toneJudgeResult = await runToneJudge(input);
+      toneJudgeResult.pass ? passedToneJudgeCount++ : null;
+
+      const aiToneJudgeResult = await runAiToneJudge(input);
+      aiToneJudgeResult.pass ? passedAiToneJudgeCount++ : null;
+
     }catch (error) {
       console.error("Error during evaluation:", error);
     }
   }
+    console.log("\n==================================================");
+    console.log("📊 FINAL EVALUATION SUMMARY");
+    console.log("==================================================");
+    console.log(`✅ ${passedCategoryCount}/${totalCases} category evals passed`);
+    console.log(`✅ ${passedToneJudgeCount}/${totalCases} tone evals passed`);
+    console.log(`✅ ${passedAiToneJudgeCount}/${totalCases} AI tone evals passed`);
+    console.log("==================================================\n");
 }
 
 runEvaluation()

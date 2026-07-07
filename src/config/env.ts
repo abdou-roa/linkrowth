@@ -34,6 +34,13 @@ const DEFAULT_MODELS: Record<LlmProvider, string> = {
   kimi: "moonshot-v1-8k",
 };
 
+const EVAL_DEFAULT_MODELS: Record<LlmProvider, string> = {
+  openai: "gpt-4o-mini",
+  gemini: "gemini-2.5-flash",
+  anthropic: "claude-sonnet-4-6",
+  kimi: "moonshot-v1-8k",
+};
+
 const MODEL_ENV_VARS: Record<LlmProvider, string> = {
   openai: "LINKROWTH_OPENAI_MODEL",
   gemini: "LINKROWTH_GEMINI_MODEL",
@@ -41,7 +48,15 @@ const MODEL_ENV_VARS: Record<LlmProvider, string> = {
   kimi: "LINKROWTH_KIMI_MODEL",
 };
 
+const EVAL_PROVIDER_ENV_VARS: Record<LlmProvider, string> = {
+  openai: "LINKROWTH_EVAL_OPENAI_MODEL",
+  gemini: "LINKROWTH_EVAL_GEMINI_MODEL",
+  anthropic: "LINKROWTH_EVAL_ANTHROPIC_MODEL",
+  kimi: "LINKROWTH_EVAL_KIMI_MODEL",
+};
+
 let cached: EnvConfig | null = null;
+let evalEnv: EnvConfig | null = null;
 
 function readProvider(value: string | undefined): LlmProvider {
   const normalized = value?.trim().toLowerCase() ?? "openai";
@@ -55,7 +70,16 @@ function readProvider(value: string | undefined): LlmProvider {
   return normalized as LlmProvider;
 }
 
-function buildProviderConfig(provider: LlmProvider): ProviderConfig {
+function buildProviderConfig(provider: LlmProvider, isEval: boolean = false): ProviderConfig {
+  if (isEval) {
+    return {
+      apiKey: process.env[PROVIDER_ENV_VARS[provider]]?.trim() ?? "",
+      defaultModel: 
+        process.env[EVAL_PROVIDER_ENV_VARS[provider]]?.trim() ?? EVAL_DEFAULT_MODELS[provider],
+      apiKeyEnvVar: PROVIDER_ENV_VARS[provider],
+    }
+  }
+
   return {
     apiKey: process.env[PROVIDER_ENV_VARS[provider]]?.trim() ?? "",
     defaultModel:
@@ -78,8 +102,22 @@ export function getEnv(): EnvConfig {
   return cached;
 }
 
-export function getProviderConfig(provider: LlmProvider): ProviderConfig {
-  return getEnv()[provider];
+export function getEvalEnv(): EnvConfig {
+  if (evalEnv) return evalEnv;
+
+  evalEnv = {
+    provider: readProvider(process.env.LINKROWTH_EVAL_PROVIDER),
+    openai: buildProviderConfig("openai", true),
+    gemini: buildProviderConfig("gemini", true),
+    anthropic: buildProviderConfig("anthropic", true),
+    kimi: buildProviderConfig("kimi", true),
+  }
+  
+  return evalEnv;
+}
+
+export function getProviderConfig(provider: LlmProvider, isEval: boolean = false): ProviderConfig {
+  return isEval ? getEvalEnv()[provider] : getEnv()[provider];
 }
 
 export function getActiveProviderConfig(): ProviderConfig & { provider: LlmProvider } {
