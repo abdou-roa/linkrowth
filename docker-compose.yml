@@ -1,0 +1,10 @@
+services:
+  engage:
+    build: .
+    image: linkrowth:latest
+    stdin_open: true
+    tty: true
+    env_file:
+      - .env
+    volumes:
+      - ./config/user.json:/app/config/user.json:ro

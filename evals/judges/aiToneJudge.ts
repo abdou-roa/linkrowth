@@ -1,36 +1,71 @@
-//this file contains ai tone judge evaluation logic
-import { JudgeResult } from "../types"
+import { AiToneEvalResult } from "../types"
 import { ToneJudgeInput } from "../types"
 import {call} from "../../src/llm"
 
-export async function runAiToneJudge(input: ToneJudgeInput): Promise<JudgeResult>
+export async function runAiToneJudge(input: ToneJudgeInput): Promise<AiToneEvalResult>
 {
-    const judgeSystemPrompt = `You are an elite QA Editor auditing text for "AI Cringe", corporate sycophancy, and typical robotic language patterns.
-    Your job is to strictly evaluate whether a generated social media comment sounds like an AI or an authentic human professional.
+    const avoidSection = input.avoid?.length
+        ? `\nAUTHOR-SPECIFIC FORBIDDEN PATTERNS:\n${input.avoid.map((item) => `- ${item}`).join("\n")}`
+        : "";
 
-    CRITICAL FAILURE PATTERNS (If any are present, the text FAILS):
-    1. Sycophantic openings or generic enthusiastic filler (e.g., "Spot on!", "Insightful share!", "Couldn't agree more!", "Great perspective!").
-    2. AI vocabulary anchors (e.g., "delve", "testament", "tapestry", "foster", "equally", "moreover", "in today's fast-paced world").
-    3. Excessive punctuation or forced hype (e.g., Exclamation marks '!', rocket emojis, or summary echo chambers that just parrot the author's words back to them).
+    const judgeSystemPrompt = `You are a calibrated QA evaluator checking LinkedIn comments for obvious "AI cringe" — not for literary polish.
+Your rubric mirrors the generation system's anti-AI guardrails. Measure clear robotic tells, not subjective taste.
 
-    You must return a raw JSON object matching this schema. Do not include markdown formatting or backticks:
-    {
-    "reasoning": "Step-by-step evaluation checking for openings, forbidden vocabulary, and general synth-tone.",
-    "pass": true or false
-    }`;
+## CALIBRATION RULES (read first — apply to every assertion)
+1. Default each assertion to TRUE unless a violation is obvious and unambiguous.
+2. When borderline, choose TRUE. Peer-level professional tone should pass.
+3. Evaluate each assertion independently.
+4. Normal acknowledgment of a post's topic is NOT sycophancy and NOT parroting.
+5. One minor imperfection does not fail an assertion — only a clear pattern does.
+
+## ASSERTION RUBRICS
+
+### avoidedSycophancy
+TRUE when the comment does NOT open with hollow praise or generic enthusiasm.
+Acceptable: entering at peer level with a substantive point, even if briefly acknowledging context ("Shipping that lean is the hard part").
+FAIL only on clear violations such as: "Insightful share!", "Great breakdown!", "I completely agree!", "Spot on!", "Couldn't agree more!", or congratulations-style openers with no substance.
+
+### cleanVocabulary
+TRUE when the comment avoids obvious AI-anchor words and phrases.
+Flag only high-confidence AI tells: "delve", "testament", "tapestry", "foster" (as verb), "moreover", "in today's fast-paced world", "it's important to note", "game-changer", "landscape" (when buzzwordy).
+Do NOT fail for ordinary professional vocabulary (e.g., "trade-off", "architecture", "adoption", "constraint").
+
+### restrainedFormatting
+TRUE when formatting is restrained — no hype spam.
+FAIL only on clear violations: multiple exclamation marks, rocket/fire emojis, ALL CAPS emphasis, or forced excitement that reads synthetic.
+A single period-ended sentence or one understated "!" on a genuine milestone is acceptable.
+
+### addsValueWithoutParroting
+TRUE when the comment adds a distinct angle, observation, or question — even briefly.
+Referencing the post's topic is expected; that is not parroting.
+FAIL only when the comment mostly restates the author's point with no new insight (summary echo with nothing added).
+
+## OUTPUT
+Return raw JSON only — no markdown fences:
+{
+  "assertions": {
+    "avoidedSycophancy": true,
+    "cleanVocabulary": true,
+    "restrainedFormatting": true,
+    "addsValueWithoutParroting": true
+  },
+  "reasoning": "One sentence per assertion: state the evidence, then pass/fail."
+}`;
     
-    const userPrompt = `Evaluate this generated comment:\n"${input.generatedComment}"`;
+    const userPrompt = `Evaluate this generated comment:
+"${input.generatedComment}"${avoidSection}`;
+
     const request = {
         system: judgeSystemPrompt,
         user: userPrompt,
     };
 
     try{
-        const resp = await call(request);
-        const judgeResult: JudgeResult = JSON.parse(resp);
+        const resp = await call(request, true);
+        const judgeResult: AiToneEvalResult = JSON.parse(resp);
         return judgeResult;
     }catch (error) {
-        console.error("Error running tone judge:", error);
+        console.error("Error running AI tone judge:", error);
         throw error;
     }
 }

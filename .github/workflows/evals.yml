@@ -1,0 +1,28 @@
+name: Production AI Evaluation Gates
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  run-evals:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Golden Dataset Evals
+        env:
+          # Pass your LLM API keys securely here
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npm run eval

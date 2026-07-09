@@ -1,0 +1,12 @@
+node_modules
+dist
+.env
+.env.*
+!.env.example
+config/user.json
+.git
+.github
+evals
+docs
+*.md
+LICENSE
