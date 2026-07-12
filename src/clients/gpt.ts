@@ -20,6 +20,8 @@ export async function call(request: LlmRequest, isEval = false): Promise<string>
   const response = await getClient().chat.completions.create({
     model: request.model ?? defaultModel,
     max_completion_tokens: request.max_completion_tokens ?? 1024,
+    // Judges must return parseable JSON; enforce it instead of trusting the prompt.
+    ...(isEval ? { response_format: { type: "json_object" as const } } : {}),
     messages: [
       { role: "system", content: request.system },
       { role: "user", content: request.user },

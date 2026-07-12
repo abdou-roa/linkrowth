@@ -16,13 +16,15 @@ function getClient(): GoogleGenAI {
 }
 
 export async function call(request: LlmRequest, isEval = false): Promise<string> {
-  const { defaultModel } = getProviderConfig("gemini");
+  const { defaultModel } = getProviderConfig("gemini", isEval);
   const response = await getClient().models.generateContent({
     model: request.model ?? defaultModel,
     contents: request.user,
     config: {
       systemInstruction: request.system,
       maxOutputTokens: request.maxTokens ?? 1024,
+      // Judges must return parseable JSON; enforce it instead of trusting the prompt.
+      ...(isEval ? { responseMimeType: "application/json" } : {}),
     },
   });
 

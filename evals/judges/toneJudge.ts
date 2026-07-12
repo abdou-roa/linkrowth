@@ -1,6 +1,14 @@
 import { ToneEvalResult } from "../types"
 import { ToneJudgeInput } from "../types"
 import {call} from "../../src/llm"
+import { parseJudgeResponse } from "./parseJudgeResponse"
+
+const TONE_ASSERTION_KEYS = [
+  "lengthAndLineBounds",
+  "matchesPacingAndComplexity",
+  "retainsGrit",
+  "organicTransitions",
+] as const;
 
 export async function runToneJudge(input: ToneJudgeInput): Promise<ToneEvalResult>
 {
@@ -68,7 +76,7 @@ GENERATED COMMENT TO EVALUATE:
 
   try{
     const resp = await call(request, true);
-    const judgeResult: ToneEvalResult = JSON.parse(resp);
+    const judgeResult: ToneEvalResult = parseJudgeResponse(resp, TONE_ASSERTION_KEYS, "toneJudge");
     return judgeResult;
   }catch (error) {
     console.error("Error running tone judge:", error);

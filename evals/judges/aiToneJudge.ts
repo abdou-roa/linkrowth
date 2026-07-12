@@ -1,6 +1,14 @@
 import { AiToneEvalResult } from "../types"
 import { ToneJudgeInput } from "../types"
 import {call} from "../../src/llm"
+import { parseJudgeResponse } from "./parseJudgeResponse"
+
+const AI_TONE_ASSERTION_KEYS = [
+  "avoidedSycophancy",
+  "cleanVocabulary",
+  "restrainedFormatting",
+  "addsValueWithoutParroting",
+] as const;
 
 export async function runAiToneJudge(input: ToneJudgeInput): Promise<AiToneEvalResult>
 {
@@ -62,7 +70,7 @@ Return raw JSON only — no markdown fences:
 
     try{
         const resp = await call(request, true);
-        const judgeResult: AiToneEvalResult = JSON.parse(resp);
+        const judgeResult: AiToneEvalResult = parseJudgeResponse(resp, AI_TONE_ASSERTION_KEYS, "aiToneJudge");
         return judgeResult;
     }catch (error) {
         console.error("Error running AI tone judge:", error);
