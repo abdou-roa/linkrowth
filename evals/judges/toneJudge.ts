@@ -60,7 +60,10 @@ Return raw JSON only — no markdown fences:
   "reasoning": "One sentence per assertion: state the evidence, then pass/fail."
 }`;
 
-  const userPrompt = `TARGET AUTHOR VOICE PARAMETERS:
+  const userPrompt = `ORIGINAL POST (context only — judge voice fit, not topical quality):
+"${input.postText}"
+
+TARGET AUTHOR VOICE PARAMETERS:
 - Voice Notes: "${input.voiceNotes}"
 ${hasVoiceSamples
     ? `- Reference Voice Samples:\n${input.voiceSamples.map((sample, index) => `  ${index + 1}. "${sample}"`).join("\n")}`

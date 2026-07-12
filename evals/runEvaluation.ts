@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ToneJudgeInput, EvalDataset } from "./types";
+import { ToneJudgeInput, EvalDataset, EvalCategory, allowedCategories } from "./types";
 import { engage } from "../src/engage";
 import { runToneJudge } from "./judges/toneJudge";
 import { runAiToneJudge } from "./judges/aiToneJudge";
@@ -70,14 +70,16 @@ async function runEvaluation(): Promise<void>
 
     const input: ToneJudgeInput = {
       generatedComment: EngageResult.suggestion,
+      postText: test_case.postText,
       voiceNotes: userConfig.voiceNotes,
       voiceSamples: userConfig.voiceSamples || [],
       avoid: userConfig.avoid,
     };
 
     try{
-      const categoryJudegeResult = EngageResult.category === test_case.category;
-      categoryJudegeResult ? passedCategories++ : null;
+      const allowed = allowedCategories(test_case.category);
+      const predicted = EngageResult.category?.trim() as EvalCategory | undefined;
+      if (predicted && allowed.includes(predicted)) passedCategories++;
 
       const toneResult = await runToneJudge(input);
       const toneFlags = Object.values(toneResult.assertions);

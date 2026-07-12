@@ -30,6 +30,7 @@ Your rubric mirrors the generation system's anti-AI guardrails. Measure clear ro
 
 ### avoidedSycophancy
 TRUE when the comment does NOT open with hollow praise or generic enthusiasm.
+Compare against the ORIGINAL POST: brief, specific acknowledgment of the post's actual point is fine; empty praise is not.
 Acceptable: entering at peer level with a substantive point, even if briefly acknowledging context ("Shipping that lean is the hard part").
 FAIL only on clear violations such as: "Insightful share!", "Great breakdown!", "I completely agree!", "Spot on!", "Couldn't agree more!", or congratulations-style openers with no substance.
 
@@ -45,7 +46,7 @@ A single period-ended sentence or one understated "!" on a genuine milestone is 
 
 ### addsValueWithoutParroting
 TRUE when the comment adds a distinct angle, observation, or question — even briefly.
-Referencing the post's topic is expected; that is not parroting.
+Use the ORIGINAL POST as ground truth: referencing its topic is expected; that is not parroting.
 FAIL only when the comment mostly restates the author's point with no new insight (summary echo with nothing added).
 
 ## OUTPUT
@@ -60,7 +61,10 @@ Return raw JSON only — no markdown fences:
   "reasoning": "One sentence per assertion: state the evidence, then pass/fail."
 }`;
     
-    const userPrompt = `Evaluate this generated comment:
+    const userPrompt = `ORIGINAL POST:
+"${input.postText}"
+
+GENERATED COMMENT TO EVALUATE:
 "${input.generatedComment}"${avoidSection}`;
 
     const request = {
