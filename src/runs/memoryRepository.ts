@@ -1,13 +1,17 @@
 import { randomUUID } from "node:crypto";
 import type { RunRecord, RunRepository } from "./types";
 
+/** In-memory repo for tests / explicit injection only — not the engage default. */
 export class InMemoryRunRepository implements RunRepository {
   private readonly runs = new Map<string, RunRecord>();
 
   async save(run: RunRecord): Promise<RunRecord> {
+    const postId = run.postId || run.post.id || randomUUID();
     const record: RunRecord = {
       ...run,
       id: run.id || randomUUID(),
+      postId,
+      post: { ...run.post, id: postId },
     };
     this.runs.set(record.id, record);
     return record;
@@ -24,6 +28,3 @@ export class InMemoryRunRepository implements RunRepository {
     return all.slice(0, limit);
   }
 }
-
-/** Shared default repo for CLI/evals when none is injected. */
-export const defaultRunRepository = new InMemoryRunRepository();

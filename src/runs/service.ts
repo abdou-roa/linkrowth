@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getAgent } from "../agents/registry";
 import type { Post, UserContext } from "../types";
-import { defaultRunRepository } from "./memoryRepository";
+import { createPostgresRunRepository } from "./postgresRepository";
 import type { RunRecord, RunRepository } from "./types";
 
 export function loadUserContext(): UserContext {
@@ -29,18 +29,22 @@ export async function runEngage(
   options: RunEngageOptions = {}
 ): Promise<RunRecord> {
   const context = options.context ?? loadUserContext();
-  const repository = options.repository ?? defaultRunRepository;
+  const repository = options.repository ?? createPostgresRunRepository();
   const agent = getAgent(options.agentId);
 
   const agentResult = await agent.run({ post, context });
 
+  const postId = post.id ?? randomUUID();
+  const createdAt = new Date().toISOString();
+
   const record: RunRecord = {
     id: randomUUID(),
+    postId,
     agentId: agentResult.agentId,
-    post,
+    post: { ...post, id: postId },
     result: agentResult.result,
     steps: agentResult.steps,
-    createdAt: new Date().toISOString(),
+    createdAt,
   };
 
   return repository.save(record);

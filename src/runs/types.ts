@@ -3,6 +3,7 @@ import type { EngageResult, Post } from "../types";
 
 export interface RunRecord {
   id: string;
+  postId: string;
   agentId: string;
   post: Post;
   result: EngageResult;
