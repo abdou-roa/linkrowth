@@ -164,27 +164,17 @@ No engage / comment actions yet (Phase 2+).
 
 ### `scoring.ts` — engagement velocity (Phase 1)
 
-Local, sync, no LLM. Score from:
+Local, sync, no LLM. Full rules: **[`SCORING.md`](./SCORING.md)**.
 
-- **text length** (thin / moderate / substantive)
-- **post age** (`ageText` → hours) × **interactions** (`likes + comments × 3`)
+Summary:
 
-Rules (tunable thresholds):
+- **Inputs:** text length, post age (`ageText`), likes, comments  
+- **Interactions:** `likes + comments × 3`  
+- **Dead rule:** old (>12h) + known cold likes/comments → score 0  
+- **Velocity / interactivity** when age is known; **absolute** fallback when age is missing  
+- **Pass:** `worthItMin = 50` → `worth_it`
 
-| Rule | Condition | Effect |
-| --- | --- | --- |
-| Dead | age > 12h, likes known & < 5, comments < 2 | hard reject → `not_worth_it` (score 0) |
-| Highly interactive | comments ≥ 15 or comments/hour ≥ 5 | +50 (floats to top) |
-| Some comments | comments ≥ 5 | +15 |
-| High velocity | age < 12h and interactions/hour ≥ 15 | +40 |
-| Early traction | age < 2h and interactions ≥ 10 | +30 |
-| Steady engagement | age ≥ 1h and likes known | +`min(30, round(interactions/hour))` |
-| Grace period | age < 1h and interactions < 5 | ignore metrics; text only |
-| Age unknown | no `ageText` | absolute likes/comments fallback |
-| Likes unknown | reactions not extracted | skip dead/steady-from-likes; keep comment bonuses |
-
-Default pass threshold: `worthItMin = 50` → `worth_it`, else `not_worth_it`.  
-Tune here (or later via options) without touching the agent.
+Tune in `shared/scoring.ts` (or later via options) without touching the agent.
 
 ### `store.ts` — session persistence
 
@@ -231,7 +221,7 @@ Open LinkedIn feed, click the Linkrowth action to open the side panel, scroll un
 | --- | --- |
 | LinkedIn DOM broke | `content/extract.ts`, `content/observer.ts` |
 | Badge look / labels | `content/badge.ts`, `content/badge.css` |
-| Scoring formula / threshold | `shared/scoring.ts` |
+| Scoring formula / threshold | `shared/scoring.ts`, [`SCORING.md`](./SCORING.md) |
 | Queue concurrency | `JobQueue(2)` in `service-worker.ts` |
 | Side panel layout | `sidepanel/index.html`, `styles.css`, `main.ts` |
 | New message types | `shared/messages.ts` + handlers in SW / content / panel |
