@@ -12,15 +12,20 @@
     "build": "tsc",
     "engage": "node dist/cli.js engage",
     "dev": "tsx src/cli.ts engage",
-    "eval": "tsx evals/runEvaluation.ts"
+    "eval": "tsx evals/runEvaluation.ts",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:migrate": "tsx src/db/migrate.ts"
   },
   "dependencies": {
     "@google/genai": "^1.10.0",
     "dotenv": "^17.2.0",
-    "openai": "^5.10.0"
+    "openai": "^5.10.0",
+    "pg": "^8.22.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/pg": "^8.20.0",
     "tsx": "^4.20.0",
     "typescript": "^5.8.0"
   },

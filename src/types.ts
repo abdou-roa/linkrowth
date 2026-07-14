@@ -1,6 +1,7 @@
 export type LlmProvider = "openai" | "gemini" | "anthropic" | "kimi";
 
 export interface Post {
+  id?: string;
   text: string;
   author?: { name?: string; role?: string };
 }

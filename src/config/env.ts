@@ -96,6 +96,17 @@ export function getActiveProviderConfig(): ProviderConfig & { provider: LlmProvi
   return { provider: env.provider, ...config };
 }
 
+export function getDatabaseUrl(): string {
+  const url = process.env.DATABASE_URL?.trim();
+  if (!url) {
+    throw new Error(
+      "Missing DATABASE_URL. Start Postgres (`npm run db:up`), copy DATABASE_URL from .env.example into .env, then run `npm run db:migrate`."
+    );
+  }
+  return url;
+}
+
 export function validateEnv(): void {
   getActiveProviderConfig();
+  getDatabaseUrl();
 }

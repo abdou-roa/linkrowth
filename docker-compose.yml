@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: linkrowth-postgres
+    environment:
+      POSTGRES_USER: linkrowth
+      POSTGRES_PASSWORD: linkrowth
+      POSTGRES_DB: linkrowth
+    ports:
+      - "5432:5432"
+    volumes:
+      - linkrowth_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U linkrowth -d linkrowth"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  linkrowth_pg:
