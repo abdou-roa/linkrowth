@@ -32,14 +32,6 @@ observeFullyVisiblePosts(async (card) => {
   if (seen.has(post.id)) return;
   seen.add(post.id);
 
-  console.log(
-    "%c🔗 Linkrowth",
-    "font-weight:bold",
-    `— queued post 🏷️`,
-    post.id.slice(0, 48),
-    post.text ? `“${post.text.slice(0, 60)}…”` : "(no text)",
-  );
-
   setBadge(card, "queued");
 
   try {

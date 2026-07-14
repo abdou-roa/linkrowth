@@ -153,7 +153,13 @@ function classifyCard(card: HTMLElement): CardVerdict {
 
   // Strong organic shells are enough — LinkedIn often hashes or localizes
   // action-bar markup, so a hard require false-negatives every post.
-  if (isStrongPostShell(card) || hasSocialActionBar(card)) return "ok";
+  if (
+    isStrongPostShell(card) ||
+    hasSocialActionBar(card) ||
+    hasActorProfileLink(card)
+  ) {
+    return "ok";
+  }
 
   return "pending";
 }
@@ -223,6 +229,34 @@ function hasJunkModule(card: HTMLElement): boolean {
  * Social action bar / engage controls.
  * Prefer stable attrs + aria labels — hashed class names often won't match.
  */
+/** Author profile in the actor chrome — useful when the action bar is not hydrated yet. */
+function hasActorProfileLink(card: HTMLElement): boolean {
+  const actor = card.querySelector(
+    [
+      ".update-components-actor",
+      ".feed-shared-actor",
+      '[data-view-name*="feed-actor"]',
+      '[data-view-name*="feed-header"]',
+      ".update-components-header",
+      ".feed-shared-header",
+    ].join(", "),
+  );
+  if (!(actor instanceof HTMLElement)) return false;
+
+  return Boolean(
+    actor.querySelector(
+      [
+        'a[data-view-name="feed-actor-image"][href*="/in/"]',
+        '[data-view-name="feed-actor-image"] a[href*="/in/"]',
+        '[data-view-name="feed-actor-image"] + a[href*="/in/"]',
+        ".update-components-actor__meta-link",
+        ".feed-shared-actor__meta-link",
+        'a[href*="/in/"]',
+      ].join(", "),
+    ),
+  );
+}
+
 function hasSocialActionBar(card: HTMLElement): boolean {
   return Boolean(
     card.querySelector(

@@ -14,6 +14,8 @@ export function extractFeedPost(card: HTMLElement): FeedPost | null {
   // Media-only posts still get a card entry (empty text).
   card.dataset.linkrowthPostId = id;
 
+  const profileUrl = extractAuthorProfileUrl(card);
+
   return {
     id,
     url,
@@ -21,6 +23,8 @@ export function extractFeedPost(card: HTMLElement): FeedPost | null {
     author: {
       name: extractAuthorName(card),
       headline: extractHeadline(card),
+      profileUrl,
+      username: profileUrl ? usernameFromProfileUrl(profileUrl) : undefined,
     },
     metrics: {
       likes: parseCount(extractReactions(card)),
@@ -55,19 +59,83 @@ function extractText(card: HTMLElement): string {
 }
 
 function extractAuthorName(card: HTMLElement): string | undefined {
-  const modern = textOf(
-    card.querySelector(
-      '[data-view-name="feed-actor-image"] + a p, [data-view-name="feed-header-text"], .update-components-actor__title span[aria-hidden="true"], .update-components-actor__title span[dir="ltr"] > span[aria-hidden="true"], .update-components-actor__title',
-    ),
-  );
-  if (modern) return modern;
+  const scope = actorRoot(card);
 
-  const menu = card.querySelector<HTMLElement>(
+  // 1) Visible name next to the avatar / on the profile meta link.
+  const nameSelectors = [
+    '[data-view-name="feed-actor-image"] + a p',
+    '[data-view-name="feed-actor-image"] ~ a p',
+    '[data-view-name="feed-header-text"]',
+    ".update-components-actor__title span[aria-hidden='true']",
+    ".update-components-actor__title span[dir='ltr'] > span[aria-hidden='true']",
+    ".update-components-actor__title",
+    ".feed-shared-actor__name",
+    ".update-components-actor__meta-link span[aria-hidden='true']",
+    ".update-components-actor__meta-link",
+    'a[href*="/in/"] span[aria-hidden="true"]',
+    'a[href*="/in/"] p',
+  ];
+
+  for (const sel of nameSelectors) {
+    const name = cleanAuthorName(textOf(scope.querySelector(sel)));
+    if (name) return name;
+  }
+
+  // 2) First /in/ profile link in the actor chrome — text or aria-label.
+  for (const anchor of scope.querySelectorAll<HTMLAnchorElement>(
+    'a[href*="/in/"]',
+  )) {
+    const fromAria = nameFromProfileAria(anchor.getAttribute("aria-label"));
+    if (fromAria) return fromAria;
+
+    const fromText = cleanAuthorName(textOf(anchor));
+    if (fromText) return fromText;
+  }
+
+  // 3) Control-menu aria: "Open control menu for … by Jane Doe"
+  const menu = extractionRoot(card).querySelector<HTMLElement>(
     'button[aria-label*="control menu" i], button[aria-label*="Open control menu" i]',
   );
   const label = menu?.getAttribute("aria-label") ?? "";
-  const match = label.match(/for .+ by (.+)$/i);
-  return match?.[1]?.trim() || undefined;
+  const match = label.match(/\bby (.+)$/i);
+  return cleanAuthorName(match?.[1] ?? "") || undefined;
+}
+
+/** Strip age / degree / "• 1st" junk that often rides along with the name node. */
+function cleanAuthorName(raw: string): string | undefined {
+  let text = raw
+    .replace(/[\u200e\u200f\u200b\u200c\u200d\ufeff]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return undefined;
+
+  // LinkedIn aria / link copy: "View profile for Jane Doe", "View Jane Doe's profile"
+  text = text
+    .replace(/^view\s+profile\s+for\s+/i, "")
+    .replace(/^view\s+(.+?)(?:['’]s)?\s+profile$/i, "$1")
+    .trim();
+
+  // Drop trailing meta: "Jane Doe • 1st", "Jane Doe 2h", "Jane Doe Verified"
+  const cleaned = text
+    .split(/\s*[•·|]\s*/)[0]
+    ?.replace(
+      /\s+(?:\d+(?:\.\d+)?(?:mo|[smhdw])|just\s*now|\d+(?:st|nd|rd|th)|Verified|Premium)\s*$/i,
+      "",
+    )
+    .trim();
+
+  if (!cleaned || cleaned.length < 2 || cleaned.length > 80) return undefined;
+  // Reject pure relative-age or "Promoted" labels.
+  if (/^(?:promoted|sponsored|\d+(?:\.\d+)?(?:mo|[smhdw])|just\s*now)$/i.test(cleaned)) {
+    return undefined;
+  }
+  return cleaned;
+}
+
+/** e.g. "View profile for Jane Doe", "View Jane Doe’s profile", "Jane Doe" */
+function nameFromProfileAria(aria: string | null): string | undefined {
+  if (!aria) return undefined;
+  return cleanAuthorName(aria);
 }
 
 function extractHeadline(card: HTMLElement): string | undefined {
@@ -77,6 +145,95 @@ function extractHeadline(card: HTMLElement): string | undefined {
     ),
   );
   return h || undefined;
+}
+
+/** Actor / header region — avoids profile links in post body or comments. */
+function actorRoot(card: HTMLElement): HTMLElement {
+  const root = extractionRoot(card);
+
+  // Prefer wrappers that include both avatar + name text (not the image leaf alone).
+  const actor = root.querySelector(
+    [
+      ".update-components-actor",
+      ".feed-shared-actor",
+      '[data-view-name="feed-header"]',
+      '[data-view-name*="feed-header"]',
+      ".update-components-header",
+      ".feed-shared-header",
+    ].join(", "),
+  );
+  if (actor instanceof HTMLElement) return actor;
+
+  // Modern feed: climb from the avatar to a parent that also contains an /in/ name link.
+  const avatar = root.querySelector(
+    '[data-view-name="feed-actor-image"], [data-view-name*="feed-actor"]',
+  );
+  if (avatar instanceof HTMLElement) {
+    let current: HTMLElement = avatar;
+    for (let i = 0; i < 6; i += 1) {
+      const next = current.parentElement;
+      if (!(next instanceof HTMLElement) || next === root) break;
+      current = next;
+      if (
+        current.querySelectorAll('a[href*="/in/"]').length >= 1 &&
+        current.querySelector("p, span")
+      ) {
+        return current;
+      }
+    }
+    return avatar.parentElement instanceof HTMLElement
+      ? avatar.parentElement
+      : avatar;
+  }
+
+  return root;
+}
+
+function extractAuthorProfileUrl(card: HTMLElement): string | undefined {
+  const scope = actorRoot(card);
+
+  const selectors = [
+    'a[data-view-name="feed-actor-image"][href*="/in/"]',
+    '[data-view-name="feed-actor-image"] a[href*="/in/"]',
+    '[data-view-name="feed-actor-image"] + a[href*="/in/"]',
+    ".update-components-actor__meta-link",
+    ".feed-shared-actor__meta-link",
+    ".update-components-actor__image-link",
+    'a[href*="/in/"]',
+  ];
+
+  for (const sel of selectors) {
+    const anchor = scope.querySelector<HTMLAnchorElement>(sel);
+    const normalized = anchor?.href
+      ? normalizeLinkedInProfileUrl(anchor.href)
+      : undefined;
+    if (normalized) return normalized;
+  }
+
+  return undefined;
+}
+
+function normalizeLinkedInProfileUrl(href: string): string | undefined {
+  try {
+    const url = new URL(href, "https://www.linkedin.com");
+    const match = url.pathname.match(/\/in\/([^/?#]+)/i);
+    if (!match?.[1]) return undefined;
+    const username = decodeURIComponent(match[1]);
+    return `https://www.linkedin.com/in/${username}`;
+  } catch {
+    return undefined;
+  }
+}
+
+export function usernameFromProfileUrl(url: string): string | undefined {
+  try {
+    const match = new URL(url, "https://www.linkedin.com").pathname.match(
+      /\/in\/([^/?#]+)/i,
+    );
+    return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

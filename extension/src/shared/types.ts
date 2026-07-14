@@ -11,6 +11,10 @@ export type TriageStatus =
 export interface FeedPostAuthor {
   name?: string;
   headline?: string;
+  /** Canonical LinkedIn profile URL, e.g. https://www.linkedin.com/in/jane-doe */
+  profileUrl?: string;
+  /** Vanity slug from `/in/{username}` */
+  username?: string;
 }
 
 export interface FeedPostMetrics {
