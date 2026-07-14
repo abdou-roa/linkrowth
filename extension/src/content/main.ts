@@ -1,6 +1,6 @@
 import { MessageType } from "../shared/messages";
 import type { FeedPost } from "../shared/types";
-import { setBadge } from "./badge";
+import { flashCard, setBadge } from "./badge";
 import { extractFeedPost } from "./extract";
 import { observeFullyVisiblePosts } from "./observer";
 
@@ -54,18 +54,36 @@ observeFullyVisiblePosts(async (card) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((message) => {
-  if (message?.type !== MessageType.TRIAGE_UPDATED) return;
-  const entry = message.entry;
-  if (!entry?.post?.id) return;
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === MessageType.TRIAGE_UPDATED) {
+    const entry = message.entry;
+    if (!entry?.post?.id) return;
 
-  const card = document.querySelector<HTMLElement>(
-    `[data-linkrowth-post-id="${CSS.escape(entry.post.id)}"]`,
-  );
-  if (!card) return;
+    const card = document.querySelector<HTMLElement>(
+      `[data-linkrowth-post-id="${CSS.escape(entry.post.id)}"]`,
+    );
+    if (!card) return;
 
-  setBadge(card, entry.triage.status, {
-    score: entry.triage.score,
-    likes: entry.post.metrics.likes,
-  });
+    setBadge(card, entry.triage.status, {
+      score: entry.triage.score,
+    });
+    return;
+  }
+
+  if (message?.type === MessageType.FOCUS_POST) {
+    const focused = focusPostInFeed(message.feedPostId);
+    sendResponse({ ok: focused });
+    return true;
+  }
 });
+
+function focusPostInFeed(feedPostId: string): boolean {
+  const card = document.querySelector<HTMLElement>(
+    `[data-linkrowth-post-id="${CSS.escape(feedPostId)}"]`,
+  );
+  if (!card) return false;
+
+  card.scrollIntoView({ behavior: "smooth", block: "center" });
+  flashCard(card);
+  return true;
+}

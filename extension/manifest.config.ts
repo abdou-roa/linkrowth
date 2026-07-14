@@ -4,7 +4,7 @@ export default defineManifest({
   manifest_version: 3,
   name: "Linkrowth",
   description:
-    "Triage LinkedIn feed posts in-place — Worth it / Not worth it before you spend tokens on a comment.",
+    "Triage your LinkedIn feed — surface posts that are good to engage before you spend time or tokens.",
   version: "0.1.0",
   icons: {
     "16": "icons/icon-16.png",

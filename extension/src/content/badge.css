@@ -13,7 +13,6 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18) !important;
 }
 
-.linkrowth-badge[data-status="idle"],
 .linkrowth-badge[data-status="queued"],
 .linkrowth-badge[data-status="roasting"] {
   background: #ececec !important;
@@ -25,12 +24,22 @@
   color: #146c2e !important;
 }
 
-.linkrowth-badge[data-status="not_worth_it"] {
-  background: #e5e5e5 !important;
-  color: #666 !important;
+@keyframes linkrowth-flash {
+  0% {
+    outline: 2px solid transparent;
+    outline-offset: 0;
+  }
+  15% {
+    outline: 2px solid #146c2e;
+    outline-offset: 3px;
+  }
+  100% {
+    outline: 2px solid transparent;
+    outline-offset: 0;
+  }
 }
 
-.linkrowth-badge[data-status="failed"] {
-  background: #f8d7d4 !important;
-  color: #a32016 !important;
+.linkrowth-flash {
+  animation: linkrowth-flash 1.4s ease-out !important;
+  scroll-margin-top: 80px !important;
 }

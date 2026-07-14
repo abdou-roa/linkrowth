@@ -9,6 +9,7 @@ export const MessageType = {
   LIST_TRIAGE_RESULT: "list_triage_result",
   RETRY_TRIAGE: "retry_triage",
   OPEN_SIDE_PANEL: "open_side_panel",
+  FOCUS_POST: "focus_post",
 } as const;
 
 export type MessageType = (typeof MessageType)[keyof typeof MessageType];
@@ -41,13 +42,20 @@ export interface OpenSidePanelMessage {
   type: typeof MessageType.OPEN_SIDE_PANEL;
 }
 
+export interface FocusPostMessage {
+  type: typeof MessageType.FOCUS_POST;
+  feedPostId: string;
+  url?: string;
+}
+
 export type ExtensionMessage =
   | PostVisibleMessage
   | TriageUpdatedMessage
   | ListTriageMessage
   | ListTriageResultMessage
   | RetryTriageMessage
-  | OpenSidePanelMessage;
+  | OpenSidePanelMessage
+  | FocusPostMessage;
 
 export function isExtensionMessage(value: unknown): value is ExtensionMessage {
   return (
