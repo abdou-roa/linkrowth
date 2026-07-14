@@ -8,7 +8,10 @@ import type { FeedPost } from "../shared/types";
 const queue = new JobQueue(2);
 const inFlight = new Set<string>();
 
+console.log("%c🔗 Linkrowth", "font-weight:bold;font-size:12px", "— service worker awake ✅");
+
 chrome.runtime.onInstalled.addListener(() => {
+  console.log("%c🔗 Linkrowth", "font-weight:bold", "— extension installed / updated 🧩");
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 });
 

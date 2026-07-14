@@ -2,35 +2,29 @@ import type { FeedPost } from "../shared/types";
 
 /**
  * Extract a FeedPost from a LinkedIn feed card.
- * DOM is brittle — keep this isolated; improve with fixtures later.
+ * Tries modern data-view-name / data-testid hooks first, then legacy class names.
  */
 export function extractFeedPost(card: HTMLElement): FeedPost | null {
   const text = extractText(card);
-  if (!text) return null;
-
   const url = extractUrl(card);
   const id = extractId(card, url, text);
+
+  if (!id) return null;
+
+  // Media-only posts still get a card entry (empty text).
   card.dataset.linkrowthPostId = id;
 
   return {
     id,
     url,
-    text,
+    text: text || "",
     author: {
-      name: textOf(card.querySelector(".update-components-actor__title span[aria-hidden='true'], .update-components-actor__title")),
-      headline: textOf(card.querySelector(".update-components-actor__description")),
+      name: extractAuthorName(card),
+      headline: extractHeadline(card),
     },
     metrics: {
-      likes: parseCount(
-        textOf(
-          card.querySelector(
-            ".social-details-social-counts__reactions-count, .social-details-social-counts__count-value",
-          ),
-        ),
-      ),
-      commentsCount: parseCount(
-        textOf(card.querySelector('button[aria-label*="comment" i], .social-details-social-counts__comments')),
-      ),
+      likes: parseCount(extractReactions(card)),
+      commentsCount: parseCount(extractComments(card)),
     },
     extractedAt: new Date().toISOString(),
   };
@@ -38,23 +32,99 @@ export function extractFeedPost(card: HTMLElement): FeedPost | null {
 
 function extractText(card: HTMLElement): string {
   const node = card.querySelector(
-    ".feed-shared-update-v2__description, .update-components-text, .feed-shared-text",
+    [
+      '[data-testid="expandable-text-box"]',
+      '[data-view-name="feed-commentary"]',
+      ".update-components-update-v2__commentary",
+      ".feed-shared-update-v2__description",
+      ".feed-shared-inline-show-more-text",
+      ".update-components-text",
+      ".feed-shared-text",
+      ".break-words",
+    ].join(", "),
   );
-  return textOf(node);
+  if (!node) return "";
+  const clone = node.cloneNode(true) as HTMLElement;
+  clone
+    .querySelectorAll(
+      '[data-testid="expandable-text-button"], .feed-shared-inline-show-more-text__see-more-less-toggle',
+    )
+    .forEach((el) => el.remove());
+  return textOf(clone);
+}
+
+function extractAuthorName(card: HTMLElement): string | undefined {
+  const modern = textOf(
+    card.querySelector(
+      '[data-view-name="feed-actor-image"] + a p, [data-view-name="feed-header-text"], .update-components-actor__title span[aria-hidden="true"], .update-components-actor__title span[dir="ltr"] > span[aria-hidden="true"], .update-components-actor__title',
+    ),
+  );
+  if (modern) return modern;
+
+  const menu = card.querySelector<HTMLElement>(
+    'button[aria-label*="control menu" i], button[aria-label*="Open control menu" i]',
+  );
+  const label = menu?.getAttribute("aria-label") ?? "";
+  const match = label.match(/for .+ by (.+)$/i);
+  return match?.[1]?.trim() || undefined;
+}
+
+function extractHeadline(card: HTMLElement): string | undefined {
+  const h = textOf(
+    card.querySelector(
+      '.update-components-actor__description span[aria-hidden="true"], .update-components-actor__description',
+    ),
+  );
+  return h || undefined;
+}
+
+function extractReactions(card: HTMLElement): string | undefined {
+  return (
+    textOf(
+      card.querySelector(
+        '[data-view-name="feed-reaction-count"], .social-details-social-counts__reactions-count, .social-details-social-counts__count-value',
+      ),
+    ) || undefined
+  );
+}
+
+function extractComments(card: HTMLElement): string | undefined {
+  return (
+    textOf(
+      card.querySelector(
+        '[data-view-name="feed-comment-count"], .social-details-social-counts__comments, button[aria-label*="comment" i]',
+      ),
+    ) || undefined
+  );
 }
 
 function extractUrl(card: HTMLElement): string | undefined {
   const anchor = card.querySelector<HTMLAnchorElement>(
-    'a[href*="/feed/update/"], a[href*="/posts/"]',
+    'a[href*="/feed/update/"], a[href*="/posts/"], a[href*="urn:li:activity"]',
   );
   return anchor?.href;
 }
 
-function extractId(card: HTMLElement, url: string | undefined, text: string): string {
-  const urn = card.getAttribute("data-urn") || card.getAttribute("data-id");
+function extractId(
+  card: HTMLElement,
+  url: string | undefined,
+  text: string,
+): string | null {
+  const componentKey =
+    card.getAttribute("componentkey") ||
+    card.closest("[componentkey]")?.getAttribute("componentkey");
+  if (componentKey) return `ck:${componentKey}`;
+
+  const urn =
+    card.getAttribute("data-urn") ||
+    card.getAttribute("data-id") ||
+    card.closest("[data-urn]")?.getAttribute("data-urn") ||
+    card.closest("[data-id]")?.getAttribute("data-id");
   if (urn) return urn;
+
   if (url) return `url:${url}`;
-  return `hash:${simpleHash(text)}`;
+  if (text) return `hash:${simpleHash(text)}`;
+  return null;
 }
 
 function textOf(el: Element | null | undefined): string {

@@ -10,11 +10,15 @@ const LABEL: Record<TriageStatus, string> = {
 };
 
 export function setBadge(card: HTMLElement, status: TriageStatus): void {
-  let badge = card.querySelector<HTMLElement>(".linkrowth-badge");
+  let badge = card.querySelector<HTMLElement>(":scope > .linkrowth-badge");
   if (!badge) {
     badge = document.createElement("div");
     badge.className = "linkrowth-badge";
-    card.style.position = card.style.position || "relative";
+    // LinkedIn wrappers often need a positioning context
+    const style = getComputedStyle(card);
+    if (style.position === "static") {
+      card.style.position = "relative";
+    }
     card.appendChild(badge);
   }
 

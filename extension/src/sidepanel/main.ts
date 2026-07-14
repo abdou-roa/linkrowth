@@ -1,6 +1,8 @@
 import { MessageType, isExtensionMessage } from "../shared/messages";
 import type { TriageEntry } from "../shared/types";
 
+console.log("%c🔗 Linkrowth", "font-weight:bold;font-size:12px", "— side panel open ✅");
+
 const listEl = document.getElementById("list") as HTMLUListElement;
 const emptyEl = document.getElementById("empty") as HTMLParagraphElement;
 const hideSkipsEl = document.getElementById("hide-skips") as HTMLInputElement;

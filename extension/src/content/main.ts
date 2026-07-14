@@ -6,19 +6,39 @@ import { observeFullyVisiblePosts } from "./observer";
 
 const seen = new Set<string>();
 
-console.info("[linkrowth] content script loaded");
+console.log("%c🔗 Linkrowth", "font-weight:bold;font-size:12px", "— content script running on LinkedIn ✅");
 
 observeFullyVisiblePosts(async (card) => {
   let post: FeedPost | null = null;
   try {
     post = extractFeedPost(card);
   } catch (error) {
-    console.warn("[linkrowth] extract failed", error);
+    console.warn("%c🔗 Linkrowth", "font-weight:bold", "— extract failed ❌", error);
+    setBadge(card, "failed");
     return;
   }
 
-  if (!post || seen.has(post.id)) return;
+  if (!post) {
+    console.warn(
+      "%c🔗 Linkrowth",
+      "font-weight:bold",
+      "— card matched but no id/text could be extracted ⚠️",
+      card,
+    );
+    setBadge(card, "failed");
+    return;
+  }
+
+  if (seen.has(post.id)) return;
   seen.add(post.id);
+
+  console.log(
+    "%c🔗 Linkrowth",
+    "font-weight:bold",
+    `— queued post 🏷️`,
+    post.id.slice(0, 48),
+    post.text ? `“${post.text.slice(0, 60)}…”` : "(no text)",
+  );
 
   setBadge(card, "queued");
 
@@ -28,7 +48,7 @@ observeFullyVisiblePosts(async (card) => {
       post,
     });
   } catch (error) {
-    console.warn("[linkrowth] failed to enqueue post", error);
+    console.warn("%c🔗 Linkrowth", "font-weight:bold", "— enqueue failed ❌", error);
     setBadge(card, "failed");
     seen.delete(post.id);
   }
