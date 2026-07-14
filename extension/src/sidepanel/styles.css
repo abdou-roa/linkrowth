@@ -85,6 +85,12 @@ body {
   margin-bottom: 6px;
 }
 
+.row-stats {
+  text-align: right;
+  flex: 1;
+  min-width: 0;
+}
+
 .status-worth_it {
   color: var(--worth);
   font-weight: 600;

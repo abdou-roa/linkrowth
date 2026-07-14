@@ -31,6 +31,8 @@ export interface FeedPost {
   author?: FeedPostAuthor;
   metrics: FeedPostMetrics;
   comments?: FeedPostComment[];
+  /** Raw LinkedIn age label, e.g. "15m", "2h", "1d" */
+  ageText?: string;
   extractedAt: string;
 }
 

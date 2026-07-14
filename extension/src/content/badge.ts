@@ -9,7 +9,11 @@ const LABEL: Record<TriageStatus, string> = {
   failed: "Couldn’t score",
 };
 
-export function setBadge(card: HTMLElement, status: TriageStatus): void {
+export function setBadge(
+  card: HTMLElement,
+  status: TriageStatus,
+  opts?: { score?: number; likes?: number },
+): void {
   let badge = card.querySelector<HTMLElement>(":scope > .linkrowth-badge");
   if (!badge) {
     badge = document.createElement("div");
@@ -23,5 +27,18 @@ export function setBadge(card: HTMLElement, status: TriageStatus): void {
   }
 
   badge.dataset.status = status;
-  badge.textContent = LABEL[status];
+  badge.textContent = formatBadgeLabel(status, opts);
+}
+
+function formatBadgeLabel(
+  status: TriageStatus,
+  opts?: { score?: number; likes?: number },
+): string {
+  const label = LABEL[status];
+  if (status !== "worth_it" && status !== "not_worth_it") return label;
+
+  const parts = [label];
+  if (typeof opts?.score === "number") parts.push(String(opts.score));
+  if (typeof opts?.likes === "number") parts.push(`${opts.likes} likes`);
+  return parts.join(" · ");
 }

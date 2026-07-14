@@ -64,5 +64,8 @@ chrome.runtime.onMessage.addListener((message) => {
   );
   if (!card) return;
 
-  setBadge(card, entry.triage.status);
+  setBadge(card, entry.triage.status, {
+    score: entry.triage.score,
+    likes: entry.post.metrics.likes,
+  });
 });

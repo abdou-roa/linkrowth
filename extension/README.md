@@ -162,13 +162,26 @@ No engage / comment actions yet (Phase 2+).
 
 `isExtensionMessage()` is a shallow runtime guard before handling.
 
-### `scoring.ts` — heuristic (Phase 1)
+### `scoring.ts` — engagement velocity (Phase 1)
 
-Local, sync, no LLM. Points from:
+Local, sync, no LLM. Score from:
 
-- text length (thin / moderate / substantive)
-- likes thresholds
-- comments-count thresholds
+- **text length** (thin / moderate / substantive)
+- **post age** (`ageText` → hours) × **interactions** (`likes + comments × 3`)
+
+Rules (tunable thresholds):
+
+| Rule | Condition | Effect |
+| --- | --- | --- |
+| Dead | age > 12h, likes known & < 5, comments < 2 | hard reject → `not_worth_it` (score 0) |
+| Highly interactive | comments ≥ 15 or comments/hour ≥ 5 | +50 (floats to top) |
+| Some comments | comments ≥ 5 | +15 |
+| High velocity | age < 12h and interactions/hour ≥ 15 | +40 |
+| Early traction | age < 2h and interactions ≥ 10 | +30 |
+| Steady engagement | age ≥ 1h and likes known | +`min(30, round(interactions/hour))` |
+| Grace period | age < 1h and interactions < 5 | ignore metrics; text only |
+| Age unknown | no `ageText` | absolute likes/comments fallback |
+| Likes unknown | reactions not extracted | skip dead/steady-from-likes; keep comment bonuses |
 
 Default pass threshold: `worthItMin = 50` → `worth_it`, else `not_worth_it`.  
 Tune here (or later via options) without touching the agent.

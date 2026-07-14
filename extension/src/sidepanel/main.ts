@@ -36,16 +36,19 @@ function render(): void {
 
     const likes = entry.post.metrics.likes ?? "—";
     const comments = entry.post.metrics.commentsCount ?? "—";
+    const age = entry.post.ageText?.trim() || "unknown";
     const statusClass = `status-${entry.triage.status}`;
 
     li.innerHTML = `
       <div class="row-meta">
         <span class="${statusClass}">${labelFor(entry.triage.status)}</span>
-        <span>score ${entry.triage.score} · likes ${likes} · comments ${comments}</span>
+        <span class="row-stats"></span>
       </div>
       <p class="snippet"></p>
       <p class="reasons"></p>
     `;
+    li.querySelector(".row-stats")!.textContent =
+      `score ${entry.triage.score} · age ${age} · likes ${likes} · comments ${comments}`;
     li.querySelector(".snippet")!.textContent = entry.post.text || "(no text)";
     li.querySelector(".reasons")!.textContent =
       entry.triage.reasons.join(" · ") ||
