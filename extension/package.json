@@ -1,0 +1,18 @@
+{
+  "name": "@linkrowth/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Linkrowth LinkedIn feed triage extension (Phase 1)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.2.0",
+    "@types/chrome": "^0.0.326",
+    "typescript": "^5.8.0",
+    "vite": "^6.3.0"
+  }
+}

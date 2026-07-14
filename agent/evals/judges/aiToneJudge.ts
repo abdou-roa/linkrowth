@@ -1,7 +1,7 @@
 //this file contains ai tone judge evaluation logic
 import { JudgeResult } from "../types"
 import { ToneJudgeInput } from "../types"
-import {call} from "../../src/llm"
+import { call } from "../../src/llm";
 
 export async function runAiToneJudge(input: ToneJudgeInput): Promise<JudgeResult>
 {

@@ -1,0 +1,61 @@
+import type { FeedPost, TriageEntry, TriageResult } from "./types";
+
+/** Message protocol between content script ↔ service worker ↔ side panel */
+
+export const MessageType = {
+  POST_VISIBLE: "post_visible",
+  TRIAGE_UPDATED: "triage_updated",
+  LIST_TRIAGE: "list_triage",
+  LIST_TRIAGE_RESULT: "list_triage_result",
+  RETRY_TRIAGE: "retry_triage",
+  OPEN_SIDE_PANEL: "open_side_panel",
+} as const;
+
+export type MessageType = (typeof MessageType)[keyof typeof MessageType];
+
+export interface PostVisibleMessage {
+  type: typeof MessageType.POST_VISIBLE;
+  post: FeedPost;
+}
+
+export interface TriageUpdatedMessage {
+  type: typeof MessageType.TRIAGE_UPDATED;
+  entry: TriageEntry;
+}
+
+export interface ListTriageMessage {
+  type: typeof MessageType.LIST_TRIAGE;
+}
+
+export interface ListTriageResultMessage {
+  type: typeof MessageType.LIST_TRIAGE_RESULT;
+  entries: TriageEntry[];
+}
+
+export interface RetryTriageMessage {
+  type: typeof MessageType.RETRY_TRIAGE;
+  feedPostId: string;
+}
+
+export interface OpenSidePanelMessage {
+  type: typeof MessageType.OPEN_SIDE_PANEL;
+}
+
+export type ExtensionMessage =
+  | PostVisibleMessage
+  | TriageUpdatedMessage
+  | ListTriageMessage
+  | ListTriageResultMessage
+  | RetryTriageMessage
+  | OpenSidePanelMessage;
+
+export function isExtensionMessage(value: unknown): value is ExtensionMessage {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "type" in value &&
+    typeof (value as { type: unknown }).type === "string"
+  );
+}
+
+export type { FeedPost, TriageEntry, TriageResult };

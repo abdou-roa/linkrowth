@@ -1,8 +1,9 @@
 import { config as loadDotenv } from "dotenv";
 import { resolve } from "node:path";
 import type { LlmProvider } from "../types";
+import { getAgentRoot } from "../paths";
 
-loadDotenv({ path: resolve(process.cwd(), ".env") });
+loadDotenv({ path: resolve(getAgentRoot(), ".env") });
 
 export interface ProviderConfig {
   apiKey: string;

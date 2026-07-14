@@ -1,0 +1,36 @@
+{
+  "name": "@linkrowth/agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Linkrowth agent — CLI engage (comment suggestion) and related tooling",
+  "license": "MIT",
+  "bin": {
+    "linkrowth": "./dist/cli.js"
+  },
+  "exports": {
+    "./engage": "./src/engage.ts",
+    "./llm": "./src/llm.ts",
+    "./types": "./src/types.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "engage": "node dist/cli.js engage",
+    "dev": "tsx src/cli.ts engage",
+    "eval": "tsx evals/runEvaluation.ts",
+    "db:up": "docker compose -f ../docker-compose.yml up -d",
+    "db:down": "docker compose -f ../docker-compose.yml down"
+  },
+  "dependencies": {
+    "@google/genai": "^1.10.0",
+    "dotenv": "^17.2.0",
+    "openai": "^5.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
