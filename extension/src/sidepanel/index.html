@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Linkrowth</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="header">
+      <h1>Linkrowth</h1>
+      <p class="subtitle">Feed triage</p>
+      <p id="summary" class="summary" aria-live="polite"></p>
+    </header>
+
+    <div class="toolbar">
+      <label class="toggle">
+        <input type="checkbox" id="hide-skips" checked />
+        Hide skips
+      </label>
+      <button type="button" id="refresh" class="ghost">Refresh</button>
+    </div>
+
+    <ul id="list" class="list" aria-live="polite"></ul>
+    <p id="empty" class="empty">
+      Scroll your LinkedIn feed. Posts that look worth engaging will show up here — click a row to jump to it.
+    </p>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

@@ -1,6 +1,6 @@
 import { JudgeResult } from "../types"
 import { ToneJudgeInput } from "../types"
-import {call} from "../../src/llm"
+import { call } from "../../src/llm";
 
 
 export async function runToneJudge(input: ToneJudgeInput): Promise<JudgeResult>

@@ -1,0 +1,45 @@
+.linkrowth-badge {
+  position: absolute !important;
+  top: 10px !important;
+  right: 12px !important;
+  z-index: 2147483000 !important;
+  padding: 3px 9px !important;
+  border-radius: 4px !important;
+  font: 600 11px/1.4 system-ui, sans-serif !important;
+  letter-spacing: 0.02em !important;
+  pointer-events: none !important;
+  color: #1a1a1a !important;
+  background: #e8e8e8 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18) !important;
+}
+
+.linkrowth-badge[data-status="queued"],
+.linkrowth-badge[data-status="roasting"] {
+  background: #ececec !important;
+  color: #555 !important;
+}
+
+.linkrowth-badge[data-status="worth_it"] {
+  background: #d7f0d7 !important;
+  color: #146c2e !important;
+}
+
+@keyframes linkrowth-flash {
+  0% {
+    outline: 2px solid transparent;
+    outline-offset: 0;
+  }
+  15% {
+    outline: 2px solid #146c2e;
+    outline-offset: 3px;
+  }
+  100% {
+    outline: 2px solid transparent;
+    outline-offset: 0;
+  }
+}
+
+.linkrowth-flash {
+  animation: linkrowth-flash 1.4s ease-out !important;
+  scroll-margin-top: 80px !important;
+}

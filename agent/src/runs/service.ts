@@ -2,15 +2,16 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getAgent } from "../agents/registry";
+import { getAgentRoot } from "../paths";
 import type { Post, UserContext } from "../types";
 import { createPostgresRunRepository } from "./postgresRepository";
 import type { RunRecord, RunRepository } from "./types";
 
 export function loadUserContext(): UserContext {
-  const configPath = join(process.cwd(), "config", "user.json");
+  const configPath = join(getAgentRoot(), "config", "user.json");
   if (!existsSync(configPath)) {
     throw new Error(
-      "Missing config/user.json. Copy config/user.example.json and fill in your niche, positioning, and target audience."
+      "Missing agent/config/user.json. Copy agent/config/user.example.json and fill in your niche, positioning, and target audience."
     );
   }
 

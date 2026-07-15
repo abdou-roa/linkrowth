@@ -1,8 +1,18 @@
+# Local docs
 docs/
-config/user.json
+
+# Secrets / local config (per package — never at repo root)
+agent/.env
+agent/config/user.json
+extension/.env
+
+# Dependencies / build (per package)
+agent/node_modules/
+agent/dist/
+extension/node_modules/
+extension/dist/
+
+# Legacy / junk
 node_modules/
 dist/
-.env
-.env.local
-.env.*.local
-!.env.example
+.DS_Store

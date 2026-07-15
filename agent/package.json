@@ -1,20 +1,24 @@
 {
-  "name": "linkrowth",
+  "name": "@linkrowth/agent",
   "version": "0.1.0",
-  "type": "module",
-  "description": "AI LinkedIn engagement agent — Episode 1 CLI",
-  "license": "MIT",
   "private": true,
+  "description": "Linkrowth agent — CLI engage (comment suggestion) and related tooling",
+  "license": "MIT",
   "bin": {
     "linkrowth": "./dist/cli.js"
   },
+  "exports": {
+    "./engage": "./src/engage.ts",
+    "./llm": "./src/llm.ts",
+    "./types": "./src/types.ts"
+  },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.json",
     "engage": "node dist/cli.js engage",
     "dev": "tsx src/cli.ts engage",
     "eval": "tsx evals/runEvaluation.ts",
-    "db:up": "docker compose up -d",
-    "db:down": "docker compose down",
+    "db:up": "docker compose -f ../docker-compose.yml up -d",
+    "db:down": "docker compose -f ../docker-compose.yml down",
     "db:migrate": "tsx src/db/migrate.ts"
   },
   "dependencies": {
