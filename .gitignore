@@ -4,11 +4,14 @@ docs/
 # Secrets / local config (per package — never at repo root)
 agent/.env
 agent/config/user.json
+api/.env
 extension/.env
 
 # Dependencies / build (per package)
 agent/node_modules/
 agent/dist/
+api/node_modules/
+api/dist/
 extension/node_modules/
 extension/dist/
 
