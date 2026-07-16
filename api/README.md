@@ -2,7 +2,7 @@
 
 Express gateway between the Chrome extension and the engage agent.
 
-**Status:** Bearer API key auth on `/v1`; health check public. Post persistence and suggestion routes are next.
+**Status:** Postgres + Bearer auth + suggestion enqueue/poll endpoints. Engage worker not wired yet (jobs stay `queued`).
 
 Base URL (Docker / local default): `http://localhost:4000`
 
@@ -47,6 +47,7 @@ The `api` service depends on healthy Postgres and uses:
 
 ```text
 DATABASE_URL=postgresql://linkrowth:linkrowth@postgres:5432/linkrowth
+API_KEY=…   # optional override; Compose defaults to dev-change-me
 PORT=4000
 ```
 
@@ -76,127 +77,39 @@ api/
   Dockerfile
   package.json
   .env.example
+  README.md
+  ENDPOINTS.md                  # HTTP API reference
   src/
-    index.ts              # listen
-    app.ts                # Express app + routes
-    config/env.ts         # PORT, NODE_ENV, DATABASE_URL, API_KEY
-    middleware/auth.ts    # Bearer API key guard for /v1
+    index.ts                    # listen + graceful shutdown
+    app.ts                      # Express app + routes
+    config/env.ts               # PORT, NODE_ENV, DATABASE_URL, API_KEY
+    db/client.ts                # pg Pool
+    db/suggestions.ts           # upsert post + enqueue/get jobs
+    middleware/auth.ts          # Bearer API key guard for /v1
+    routes/suggestions/         # POST/GET /v1/suggestions
+    types/suggestions.ts        # request/response types
 ```
 
 ---
 
 ## Endpoints
 
-### Implemented
+Full request/response reference: **[`ENDPOINTS.md`](./ENDPOINTS.md)**.
 
-#### `GET /health`
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/health` | No | Readiness (Postgres ping) |
+| `GET` | `/v1/ping` | Yes | Auth smoke test |
+| `POST` | `/v1/suggestions` | Yes | Enqueue suggestion job for a feed post |
+| `GET` | `/v1/suggestions/:jobId` | Yes | Poll job status (+ run when ready) |
 
-Liveness check. No auth.
-
-**Response** `200`
-
-```json
-{ "ok": true, "service": "linkrowth-api" }
-```
-
-#### `GET /v1/ping`
-
-Auth smoke test. Requires Bearer API key.
-
-**Headers**
-
-```http
-Authorization: Bearer <API_KEY>
-```
-
-**Response** `200`
-
-```json
-{ "ok": true }
-```
-
-**Errors**
-
-| Status | When |
-| --- | --- |
-| `401` | Missing/invalid `Authorization` header or wrong key |
-| `503` | Server has no `API_KEY` configured |
-
----
-
-### Planned
-
-These match the schema in `docs/database-schema.md`. Shapes below are drafts; adjust when implementing.
-
-#### `POST /v1/suggestions`
-
-Extension submits a feed post (and optional triage). API upserts `posts`, inserts `suggestion_jobs` (`queued`), triggers engage asynchronously, returns the job id immediately.
-
-**Request body (draft)**
-
-```json
-{
-  "feedPost": {
-    "id": "linkedin-post-id",
-    "url": "https://www.linkedin.com/feed/update/…",
-    "text": "Post body…",
-    "author": {
-      "name": "Jane Doe",
-      "headline": "Founder @ …",
-      "profileUrl": "https://www.linkedin.com/in/jane-doe",
-      "username": "jane-doe"
-    },
-    "metrics": { "likes": 42, "commentsCount": 3 },
-    "comments": [],
-    "ageText": "2h",
-    "extractedAt": "2026-07-16T11:00:00.000Z"
-  },
-  "triage": {
-    "status": "worth_it",
-    "score": 0.82,
-    "reasons": ["niche match"]
-  }
-}
-```
-
-**Response** `202` (draft)
-
-```json
-{
-  "jobId": "uuid",
-  "postId": "linkedin-post-id",
-  "status": "queued"
-}
-```
-
-#### `GET /v1/suggestions/:jobId`
-
-Poll job status and, when ready, the suggestion run.
-
-**Response** `200` (draft)
-
-```json
-{
-  "jobId": "uuid",
-  "postId": "linkedin-post-id",
-  "status": "succeeded",
-  "error": null,
-  "run": {
-    "suggestion": "…",
-    "rationale": "…",
-    "category": null,
-    "agentId": "one_shot_engage"
-  }
-}
-```
-
-`status`: `queued` | `running` | `succeeded` | `failed`.
+Engage worker is not wired yet — jobs stay `queued` and `run` stays `null` until then.
 
 ---
 
 ## Auth
 
-Bearer API key on every `/v1/*` route. `/health` stays public (liveness probes).
+Bearer API key on every `/v1/*` route. `/health` stays public (readiness / DB check).
 
 ```http
 Authorization: Bearer <API_KEY>
@@ -235,7 +148,7 @@ curl -i -H "Authorization: Bearer dev-change-me" http://localhost:4000/v1/ping
 | --- | --- | --- |
 | `PORT` | `4000` | Host/container listen port (avoids clash with extension tooling on `3000`) |
 | `NODE_ENV` | `development` | `production` in Docker |
-| `DATABASE_URL` | (see `.env.example`) | Required once routes touch Postgres |
+| `DATABASE_URL` | (required) | Postgres connection string. Validated at process start |
 | `API_KEY` | (none) | Required for `/v1/*`. Docker Compose defaults to `dev-change-me` via `${API_KEY:-…}` — override in real deploys |
 
 ---
