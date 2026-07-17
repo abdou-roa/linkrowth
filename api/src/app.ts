@@ -8,6 +8,17 @@ export function createApp() {
 
   app.use(express.json({ limit: "1mb" }));
 
+  app.use((req, res, next) => {
+    const startedAt = Date.now();
+    console.log(`[req] ${req.method} ${req.originalUrl}`);
+    res.on("finish", () => {
+      console.log(
+        `[res] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - startedAt}ms)`,
+      );
+    });
+    next();
+  });
+
   app.get("/health", async (_req, res) => {
     const databaseUp = await checkDatabase();
     const body = {

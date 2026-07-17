@@ -47,7 +47,7 @@ The `api` service depends on healthy Postgres and uses:
 
 ```text
 DATABASE_URL=postgresql://linkrowth:linkrowth@postgres:5432/linkrowth
-API_KEY=…   # optional override; Compose defaults to dev-change-me
+API_KEY=…   # from api/.env via env_file (same key as local / extension)
 PORT=4000
 ```
 
@@ -137,8 +137,8 @@ Verify locally:
 # Fail without key
 curl -i http://localhost:4000/v1/ping
 
-# Succeed with key
-curl -i -H "Authorization: Bearer dev-change-me" http://localhost:4000/v1/ping
+# Succeed with key (use the value from api/.env)
+curl -i -H "Authorization: Bearer $API_KEY" http://localhost:4000/v1/ping
 ```
 
 ---
@@ -150,7 +150,7 @@ curl -i -H "Authorization: Bearer dev-change-me" http://localhost:4000/v1/ping
 | `PORT` | `4000` | Host/container listen port (avoids clash with extension tooling on `3000`) |
 | `NODE_ENV` | `development` | `production` in Docker |
 | `DATABASE_URL` | (required) | Postgres connection string. Validated at process start |
-| `API_KEY` | (none) | Required for `/v1/*`. Docker Compose defaults to `dev-change-me` via `${API_KEY:-…}` — override in real deploys |
+| `API_KEY` | (none) | Required for `/v1/*`. Compose loads it from `api/.env` via `env_file` |
 
 ---
 

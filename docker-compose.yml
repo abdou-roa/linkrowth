@@ -25,12 +25,15 @@ services:
     container_name: linkrowth-api
     ports:
       - "4000:4000"
+    # Loads API_KEY (and other vars) from api/.env — same file local `npm run dev` uses.
+    # Do not set API_KEY under environment: below or it overrides this with the Compose default.
+    env_file:
+      - ./api/.env
     environment:
       PORT: "4000"
       NODE_ENV: production
+      # Compose network hostname (overrides localhost DATABASE_URL from api/.env)
       DATABASE_URL: postgresql://linkrowth:linkrowth@postgres:5432/linkrowth
-      # Override in production: API_KEY=$(openssl rand -hex 32) docker compose up
-      API_KEY: ${API_KEY:-dev-change-me}
     depends_on:
       postgres:
         condition: service_healthy

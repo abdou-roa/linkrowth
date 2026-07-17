@@ -12,6 +12,8 @@ export const MessageType = {
   FOCUS_POST: "focus_post",
   GENERATE_SUGGESTION: "generate_suggestion",
   GENERATE_SUGGESTION_RESULT: "generate_suggestion_result",
+  GENERATE_SUGGESTIONS_BATCH: "generate_suggestions_batch",
+  GENERATE_SUGGESTIONS_BATCH_RESULT: "generate_suggestions_batch_result",
   REMOVE_TRIAGE: "remove_triage",
   REMOVE_TRIAGE_RESULT: "remove_triage_result",
   TRIAGE_REMOVED: "triage_removed",
@@ -68,6 +70,27 @@ export interface GenerateSuggestionResultMessage {
   error?: string;
 }
 
+export interface GenerateSuggestionsBatchMessage {
+  type: typeof MessageType.GENERATE_SUGGESTIONS_BATCH;
+  feedPostIds: string[];
+  /** Optional shared notes applied to every item. */
+  notes?: string;
+}
+
+export interface GenerateSuggestionsBatchResultItem {
+  feedPostId: string;
+  jobId: string;
+  status: string;
+}
+
+export interface GenerateSuggestionsBatchResultMessage {
+  type: typeof MessageType.GENERATE_SUGGESTIONS_BATCH_RESULT;
+  ok: boolean;
+  feedPostIds: string[];
+  results?: GenerateSuggestionsBatchResultItem[];
+  error?: string;
+}
+
 export interface RemoveTriageMessage {
   type: typeof MessageType.REMOVE_TRIAGE;
   feedPostIds: string[];
@@ -95,6 +118,8 @@ export type ExtensionMessage =
   | FocusPostMessage
   | GenerateSuggestionMessage
   | GenerateSuggestionResultMessage
+  | GenerateSuggestionsBatchMessage
+  | GenerateSuggestionsBatchResultMessage
   | RemoveTriageMessage
   | RemoveTriageResultMessage
   | TriageRemovedMessage;
