@@ -1,6 +1,6 @@
 import { MessageType } from "../shared/messages";
 import type { FeedPost } from "../shared/types";
-import { flashCard, setBadge } from "./badge";
+import { flashCard, removeBadge, setBadge } from "./badge";
 import { prepareGenerateComposer } from "./composer";
 import { extractFeedPost } from "./extract";
 import { observeFullyVisiblePosts } from "./observer";
@@ -68,6 +68,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse({ ok });
     });
     return true;
+  }
+
+  if (message?.type === MessageType.TRIAGE_REMOVED) {
+    for (const feedPostId of message.feedPostIds) {
+      seen.delete(feedPostId);
+      const card = document.querySelector<HTMLElement>(
+        `[data-linkrowth-post-id="${CSS.escape(feedPostId)}"]`,
+      );
+      if (card) removeBadge(card);
+    }
   }
 });
 

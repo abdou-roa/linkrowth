@@ -59,8 +59,45 @@ async function handleMessage(
     case MessageType.GENERATE_SUGGESTION:
       return enqueueSuggestion(message.feedPostId, message.notes);
 
+    case MessageType.REMOVE_TRIAGE:
+      return removeTriageEntries(message.feedPostIds);
+
     default:
       return;
+  }
+}
+
+async function removeTriageEntries(
+  feedPostIds: string[],
+): Promise<Record<string, unknown>> {
+  const ids = [...new Set(feedPostIds.filter(Boolean))];
+  if (ids.length === 0) {
+    return {
+      type: MessageType.REMOVE_TRIAGE_RESULT,
+      ok: true,
+      feedPostIds: [],
+    };
+  }
+
+  try {
+    await triageStore.removeMany(ids);
+    for (const feedPostId of ids) {
+      inFlight.delete(feedPostId);
+    }
+    broadcast({ type: MessageType.TRIAGE_REMOVED, feedPostIds: ids });
+    return {
+      type: MessageType.REMOVE_TRIAGE_RESULT,
+      ok: true,
+      feedPostIds: ids,
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return {
+      type: MessageType.REMOVE_TRIAGE_RESULT,
+      ok: false,
+      feedPostIds: ids,
+      error: msg,
+    };
   }
 }
 

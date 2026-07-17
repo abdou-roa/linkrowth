@@ -73,6 +73,82 @@ body {
   padding: 4px 10px;
   cursor: pointer;
   color: var(--ink);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.ghost:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ghost.danger {
+  color: var(--fail);
+  border-color: #e8c4c0;
+}
+
+.ghost.danger:not(:disabled):hover {
+  background: #fdf0ee;
+}
+
+.ghost[aria-pressed="true"] {
+  border-color: var(--worth);
+  color: var(--worth);
+  background: #edf7ef;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.list-item {
+  list-style: none;
+}
+
+.list.select-mode .row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.row-checkbox {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 1.5px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  position: relative;
+}
+
+.row-checkbox[data-checked="true"] {
+  border-color: var(--worth);
+  background: var(--worth);
+}
+
+.row-checkbox[data-checked="true"]::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.row-selectable[aria-pressed="true"] {
+  border-color: var(--worth);
+  background: #f7fbf7;
+}
+
+.row-content {
+  flex: 1;
+  min-width: 0;
 }
 
 .list {

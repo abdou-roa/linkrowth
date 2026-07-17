@@ -18,7 +18,12 @@
         <input type="checkbox" id="hide-skips" checked />
         Hide skips
       </label>
-      <button type="button" id="refresh" class="ghost">Refresh</button>
+      <div class="toolbar-actions">
+        <button type="button" id="select-mode" class="ghost">Select</button>
+        <button type="button" id="clear-selected" class="ghost danger" disabled>
+          Clear
+        </button>
+      </div>
     </div>
 
     <ul id="list" class="list" aria-live="polite"></ul>
