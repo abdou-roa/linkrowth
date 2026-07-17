@@ -1,7 +1,8 @@
 import { Router } from "express";
-import { createSuggestionJob, getSuggestionJob } from "../../db/suggestions";
+import { createSuggestionJob, createSuggestionJobs, getSuggestionJob } from "../../db/suggestions";
 import {
   parseCreateSuggestionRequest,
+  parseCreateSuggestionsBatchRequest,
   parseJobId,
   ValidationError,
 } from "./validate";
@@ -21,6 +22,25 @@ export function suggestionsRouter(): Router {
       }
       console.error("[api] POST /v1/suggestions failed", err);
       res.status(500).json({ error: "internal_error", message: "Failed to create suggestion job" });
+    }
+  });
+
+  // Registered before GET /:jobId so "batch" is not parsed as a job id.
+  router.post("/batch", async (req, res) => {
+    try {
+      const { items } = parseCreateSuggestionsBatchRequest(req.body);
+      const results = await createSuggestionJobs(items);
+      res.status(202).json({ results });
+    } catch (err) {
+      if (err instanceof ValidationError) {
+        res.status(400).json({ error: "validation_error", message: err.message });
+        return;
+      }
+      console.error("[api] POST /v1/suggestions/batch failed", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to create suggestion jobs",
+      });
     }
   });
 

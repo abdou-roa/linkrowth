@@ -90,6 +90,53 @@ async function findActiveJob(
 }
 
 /**
+ * Upsert the feed post and enqueue a suggestion job within an open transaction.
+ * Uses a savepoint so unique conflicts roll back only the job insert.
+ */
+async function enqueueSuggestionJob(
+  client: PoolClient,
+  post: FeedPostInput,
+  triage?: TriageInput,
+  notes?: string
+): Promise<CreatedJob> {
+  await upsertPost(client, post);
+  await client.query("SAVEPOINT sp_job");
+
+  try {
+    const inserted = await client.query<{
+      id: string;
+      post_id: string;
+      status: SuggestionJobStatus;
+    }>(
+      `INSERT INTO suggestion_jobs (post_id, status, triage, notes)
+       VALUES ($1, 'queued', $2::jsonb, $3)
+       RETURNING id, post_id, status`,
+      [
+        post.id,
+        triage ? JSON.stringify(triage) : null,
+        notes?.trim() ? notes.trim() : null,
+      ]
+    );
+    await client.query("RELEASE SAVEPOINT sp_job");
+    const row = inserted.rows[0];
+    return { jobId: row.id, postId: row.post_id, status: row.status };
+  } catch (err) {
+    if (!isUniqueViolation(err)) {
+      throw err;
+    }
+    // Keep the post upsert; return the existing active job.
+    await client.query("ROLLBACK TO SAVEPOINT sp_job");
+    const existing = await findActiveJob(client, post.id);
+    if (!existing) {
+      throw new Error(
+        `Active suggestion job conflict for post ${post.id}, but none found`
+      );
+    }
+    return existing;
+  }
+}
+
+/**
  * Upsert the feed post and enqueue a suggestion job.
  * If an active (queued/running) job already exists for the post, returns that job.
  */
@@ -102,42 +149,44 @@ export async function createSuggestionJob(
 
   try {
     await client.query("BEGIN");
-    await upsertPost(client, post);
-    await client.query("SAVEPOINT sp_job");
-
+    const job = await enqueueSuggestionJob(client, post, triage, notes);
+    await client.query("COMMIT");
+    return job;
+  } catch (err) {
     try {
-      const inserted = await client.query<{
-        id: string;
-        post_id: string;
-        status: SuggestionJobStatus;
-      }>(
-        `INSERT INTO suggestion_jobs (post_id, status, triage, notes)
-         VALUES ($1, 'queued', $2::jsonb, $3)
-         RETURNING id, post_id, status`,
-        [
-          post.id,
-          triage ? JSON.stringify(triage) : null,
-          notes?.trim() ? notes.trim() : null,
-        ]
-      );
-      await client.query("COMMIT");
-      const row = inserted.rows[0];
-      return { jobId: row.id, postId: row.post_id, status: row.status };
-    } catch (err) {
-      if (!isUniqueViolation(err)) {
-        throw err;
-      }
-      // Keep the post upsert; return the existing active job.
-      await client.query("ROLLBACK TO SAVEPOINT sp_job");
-      const existing = await findActiveJob(client, post.id);
-      await client.query("COMMIT");
-      if (!existing) {
-        throw new Error(
-          `Active suggestion job conflict for post ${post.id}, but none found`
-        );
-      }
-      return existing;
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore if no open transaction */
     }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Enqueue suggestion jobs for many posts in one transaction.
+ * Results are in the same order as `items`. Idempotent per post (same as single create).
+ */
+export async function createSuggestionJobs(
+  items: Array<{
+    feedPost: FeedPostInput;
+    triage?: TriageInput;
+    notes?: string;
+  }>
+): Promise<CreatedJob[]> {
+  const client = await getPool().connect();
+
+  try {
+    await client.query("BEGIN");
+    const results: CreatedJob[] = [];
+    for (const item of items) {
+      results.push(
+        await enqueueSuggestionJob(client, item.feedPost, item.triage, item.notes)
+      );
+    }
+    await client.query("COMMIT");
+    return results;
   } catch (err) {
     try {
       await client.query("ROLLBACK");

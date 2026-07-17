@@ -44,12 +44,21 @@ export interface CreateSuggestionRequest {
   notes?: string;
 }
 
+/** Batch enqueue for mass-selected side-panel cards. */
+export interface CreateSuggestionsBatchRequest {
+  items: CreateSuggestionRequest[];
+}
+
 export type SuggestionJobStatus = "queued" | "running" | "succeeded" | "failed";
 
 export interface CreateSuggestionResponse {
   jobId: string;
   postId: string;
   status: SuggestionJobStatus;
+}
+
+export interface CreateSuggestionsBatchResponse {
+  results: CreateSuggestionResponse[];
 }
 
 export interface SuggestionRunSummary {

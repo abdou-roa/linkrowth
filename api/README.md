@@ -86,7 +86,7 @@ api/
     db/client.ts                # pg Pool
     db/suggestions.ts           # upsert post + enqueue/get jobs
     middleware/auth.ts          # Bearer API key guard for /v1
-    routes/suggestions/         # POST/GET /v1/suggestions
+    routes/suggestions/         # POST/GET /v1/suggestions (+ /batch)
     types/suggestions.ts        # request/response types
 ```
 
@@ -101,6 +101,7 @@ Full request/response reference: **[`ENDPOINTS.md`](./ENDPOINTS.md)**.
 | `GET` | `/health` | No | Readiness (Postgres ping) |
 | `GET` | `/v1/ping` | Yes | Auth smoke test |
 | `POST` | `/v1/suggestions` | Yes | Enqueue suggestion job for a feed post |
+| `POST` | `/v1/suggestions/batch` | Yes | Enqueue suggestion jobs for many posts |
 | `GET` | `/v1/suggestions/:jobId` | Yes | Poll job status (+ run when ready) |
 
 Engage worker is not wired yet — jobs stay `queued` and `run` stays `null` until then.
