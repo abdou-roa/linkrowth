@@ -26,7 +26,11 @@ export default defineManifest({
     default_path: "src/sidepanel/index.html",
   },
   permissions: ["storage", "sidePanel"],
-  host_permissions: ["https://www.linkedin.com/*"],
+  host_permissions: [
+    "https://www.linkedin.com/*",
+    "http://localhost:4000/*",
+    "http://127.0.0.1:4000/*",
+  ],
   content_scripts: [
     {
       matches: ["https://www.linkedin.com/*"],

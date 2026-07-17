@@ -134,7 +134,7 @@ function buildRow(entry: TriageEntry): HTMLButtonElement {
   const hint = document.createElement("p");
   hint.className = "row-hint";
   hint.textContent = entry.post.url
-    ? "Click to jump to post"
+    ? "Click to jump & generate comment"
     : "Post link unavailable";
 
   btn.append(meta, authorEl, snippet);

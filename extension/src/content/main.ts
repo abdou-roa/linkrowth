@@ -1,6 +1,7 @@
 import { MessageType } from "../shared/messages";
 import type { FeedPost } from "../shared/types";
 import { flashCard, setBadge } from "./badge";
+import { prepareGenerateComposer } from "./composer";
 import { extractFeedPost } from "./extract";
 import { observeFullyVisiblePosts } from "./observer";
 
@@ -63,13 +64,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message?.type === MessageType.FOCUS_POST) {
-    const focused = focusPostInFeed(message.feedPostId);
-    sendResponse({ ok: focused });
+    void focusPostInFeed(message.feedPostId).then((ok) => {
+      sendResponse({ ok });
+    });
     return true;
   }
 });
 
-function focusPostInFeed(feedPostId: string): boolean {
+async function focusPostInFeed(feedPostId: string): Promise<boolean> {
   const card = document.querySelector<HTMLElement>(
     `[data-linkrowth-post-id="${CSS.escape(feedPostId)}"]`,
   );
@@ -77,5 +79,23 @@ function focusPostInFeed(feedPostId: string): boolean {
 
   card.scrollIntoView({ behavior: "smooth", block: "center" });
   flashCard(card);
+
+  // Give the scroll a moment, then open the comment composer + Generate CTA.
+  await wait(450);
+  try {
+    await prepareGenerateComposer(card, feedPostId);
+  } catch (error) {
+    console.warn(
+      "%c🔗 Linkrowth",
+      "font-weight:bold",
+      "— prepare generate composer failed ⚠️",
+      error,
+    );
+  }
+
   return true;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }

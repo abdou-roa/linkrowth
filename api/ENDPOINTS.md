@@ -149,7 +149,8 @@ Content-Type: application/json
     "reasons": ["niche match"],
     "error": null,
     "scoredAt": "2026-07-16T11:00:01.000Z"
-  }
+  },
+  "notes": "Mention their launch week and ask what broke first"
 }
 ```
 
@@ -169,6 +170,14 @@ Content-Type: application/json
 | `metrics.commentsCount` | number | no | |
 | `comments` | array | no | Each item needs `text`; `author` / `likes` optional |
 | `ageText` | string | no | Raw LinkedIn age label (`15m`, `2h`, `1d`) |
+
+### `notes` (optional)
+
+User angle / ideas for the comment. Empty or omitted = quick suggestion (no guidance).
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `notes` | string | no | Stored on `suggestion_jobs.notes` |
 
 ### `triage` fields (optional)
 

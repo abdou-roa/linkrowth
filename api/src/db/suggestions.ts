@@ -95,7 +95,8 @@ async function findActiveJob(
  */
 export async function createSuggestionJob(
   post: FeedPostInput,
-  triage?: TriageInput
+  triage?: TriageInput,
+  notes?: string
 ): Promise<CreatedJob> {
   const client = await getPool().connect();
 
@@ -110,10 +111,14 @@ export async function createSuggestionJob(
         post_id: string;
         status: SuggestionJobStatus;
       }>(
-        `INSERT INTO suggestion_jobs (post_id, status, triage)
-         VALUES ($1, 'queued', $2::jsonb)
+        `INSERT INTO suggestion_jobs (post_id, status, triage, notes)
+         VALUES ($1, 'queued', $2::jsonb, $3)
          RETURNING id, post_id, status`,
-        [post.id, triage ? JSON.stringify(triage) : null]
+        [
+          post.id,
+          triage ? JSON.stringify(triage) : null,
+          notes?.trim() ? notes.trim() : null,
+        ]
       );
       await client.query("COMMIT");
       const row = inserted.rows[0];

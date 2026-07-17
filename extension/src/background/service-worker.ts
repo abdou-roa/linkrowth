@@ -1,4 +1,5 @@
 import { JobQueue } from "../shared/queue";
+import { createSuggestion } from "../shared/api";
 import { MessageType, isExtensionMessage } from "../shared/messages";
 import type { ExtensionMessage, TriageEntry } from "../shared/messages";
 import { scoreFeedPost } from "../shared/scoring";
@@ -55,8 +56,67 @@ async function handleMessage(
       // Panel open is typically triggered via action click / setPanelBehavior.
       return;
 
+    case MessageType.GENERATE_SUGGESTION:
+      return enqueueSuggestion(message.feedPostId, message.notes);
+
     default:
       return;
+  }
+}
+
+async function enqueueSuggestion(
+  feedPostId: string,
+  notes?: string,
+): Promise<Record<string, unknown>> {
+  const entry = await triageStore.get(feedPostId);
+  if (!entry) {
+    return {
+      type: MessageType.GENERATE_SUGGESTION_RESULT,
+      ok: false,
+      feedPostId,
+      error: "Post not found in triage store — scroll it into view first",
+    };
+  }
+
+  try {
+    const { triage, post } = entry;
+    const result = await createSuggestion({
+      feedPost: {
+        id: post.id,
+        url: post.url,
+        text: post.text,
+        author: post.author,
+        metrics: post.metrics,
+        comments: post.comments,
+        ageText: post.ageText,
+        extractedAt: post.extractedAt,
+      },
+      triage: {
+        status: triage.status,
+        score: triage.score,
+        reasons: triage.reasons,
+        error: triage.error,
+        scoredAt: triage.scoredAt,
+      },
+      notes: notes?.trim() ? notes.trim() : undefined,
+    });
+
+    return {
+      type: MessageType.GENERATE_SUGGESTION_RESULT,
+      ok: true,
+      feedPostId,
+      jobId: result.jobId,
+      status: result.status,
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn("%c🔗 Linkrowth", "font-weight:bold", "— suggestion enqueue failed ❌", msg);
+    return {
+      type: MessageType.GENERATE_SUGGESTION_RESULT,
+      ok: false,
+      feedPostId,
+      error: msg,
+    };
   }
 }
 

@@ -11,8 +11,8 @@ export function suggestionsRouter(): Router {
 
   router.post("/", async (req, res) => {
     try {
-      const { feedPost, triage } = parseCreateSuggestionRequest(req.body);
-      const job = await createSuggestionJob(feedPost, triage);
+      const { feedPost, triage, notes } = parseCreateSuggestionRequest(req.body);
+      const job = await createSuggestionJob(feedPost, triage, notes);
       res.status(202).json(job);
     } catch (err) {
       if (err instanceof ValidationError) {

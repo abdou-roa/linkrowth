@@ -24,11 +24,15 @@ CREATE TABLE IF NOT EXISTS suggestion_jobs (
   status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed')),
   priority INT NOT NULL DEFAULT 0,
   triage JSONB,
+  notes TEXT,
   error TEXT,
   started_at TIMESTAMPTZ,
   finished_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Existing DBs created before notes existed
+ALTER TABLE suggestion_jobs ADD COLUMN IF NOT EXISTS notes TEXT;
 
 -- At most one active (queued or running) job per post
 CREATE UNIQUE INDEX IF NOT EXISTS suggestion_jobs_one_active_per_post
