@@ -15,13 +15,21 @@ const emptyEl = document.getElementById("empty") as HTMLParagraphElement;
 const summaryEl = document.getElementById("summary") as HTMLParagraphElement;
 const hideSkipsEl = document.getElementById("hide-skips") as HTMLInputElement;
 const selectModeEl = document.getElementById("select-mode") as HTMLButtonElement;
+const generateSelectedEl = document.getElementById(
+  "generate-selected",
+) as HTMLButtonElement;
 const clearSelectedEl = document.getElementById(
   "clear-selected",
 ) as HTMLButtonElement;
 
+/** Keep in sync with API / service-worker MAX_BATCH_ITEMS. */
+const MAX_BATCH_ITEMS = 50;
+
 let entries: TriageEntry[] = [];
 let selectMode = false;
 const selectedIds = new Set<string>();
+let batchInFlight = false;
+let statusMessage = "";
 
 async function loadEntries(): Promise<void> {
   const response = await chrome.runtime.sendMessage({
@@ -81,13 +89,28 @@ function renderSummary(): void {
   if (selectMode && selectedIds.size > 0) {
     parts.push(`${selectedIds.size} selected`);
   }
+  if (statusMessage) parts.push(statusMessage);
   summaryEl.textContent = parts.join(" · ");
 }
 
 function updateToolbar(): void {
   selectModeEl.textContent = selectMode ? "Done" : "Select";
   selectModeEl.setAttribute("aria-pressed", String(selectMode));
-  clearSelectedEl.disabled = !selectMode || selectedIds.size === 0;
+
+  const hasSelection = selectMode && selectedIds.size > 0;
+  const overLimit = selectedIds.size > MAX_BATCH_ITEMS;
+
+  generateSelectedEl.disabled = !hasSelection || batchInFlight || overLimit;
+  generateSelectedEl.textContent = batchInFlight
+    ? "Queuing…"
+    : selectedIds.size > 0
+      ? `Generate (${selectedIds.size})`
+      : "Generate";
+  generateSelectedEl.title = overLimit
+    ? `Select at most ${MAX_BATCH_ITEMS} posts`
+    : "";
+
+  clearSelectedEl.disabled = !hasSelection || batchInFlight;
   clearSelectedEl.textContent =
     selectedIds.size > 0 ? `Clear (${selectedIds.size})` : "Clear";
 }
@@ -210,11 +233,62 @@ function setSelectMode(enabled: boolean): void {
   render();
 }
 
+async function generateSelected(): Promise<void> {
+  if (selectedIds.size === 0 || batchInFlight) return;
+  if (selectedIds.size > MAX_BATCH_ITEMS) {
+    statusMessage = `Max ${MAX_BATCH_ITEMS} at a time`;
+    renderSummary();
+    return;
+  }
+
+  const feedPostIds = [...selectedIds];
+  batchInFlight = true;
+  statusMessage = "";
+  updateToolbar();
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: MessageType.GENERATE_SUGGESTIONS_BATCH,
+      feedPostIds,
+    });
+
+    if (!response?.ok) {
+      console.warn(
+        "%c🔗 Linkrowth",
+        "font-weight:bold",
+        "— batch generate failed ❌",
+        response?.error,
+      );
+      statusMessage = response?.error
+        ? String(response.error)
+        : "Generate failed";
+      return;
+    }
+
+    const count = Array.isArray(response.results) ? response.results.length : 0;
+    statusMessage = `Queued ${count}`;
+    selectedIds.clear();
+    selectMode = false;
+  } catch (error) {
+    console.warn(
+      "%c🔗 Linkrowth",
+      "font-weight:bold",
+      "— batch generate failed ❌",
+      error,
+    );
+    statusMessage = error instanceof Error ? error.message : "Generate failed";
+  } finally {
+    batchInFlight = false;
+    render();
+  }
+}
+
 async function clearSelected(): Promise<void> {
-  if (selectedIds.size === 0) return;
+  if (selectedIds.size === 0 || batchInFlight) return;
 
   const feedPostIds = [...selectedIds];
   clearSelectedEl.disabled = true;
+  statusMessage = "";
 
   try {
     const response = await chrome.runtime.sendMessage({
@@ -229,7 +303,9 @@ async function clearSelected(): Promise<void> {
         "— clear failed ❌",
         response?.error,
       );
+      statusMessage = response?.error ? String(response.error) : "Clear failed";
       updateToolbar();
+      renderSummary();
       return;
     }
 
@@ -240,7 +316,9 @@ async function clearSelected(): Promise<void> {
     render();
   } catch (error) {
     console.warn("%c🔗 Linkrowth", "font-weight:bold", "— clear failed ❌", error);
+    statusMessage = error instanceof Error ? error.message : "Clear failed";
     updateToolbar();
+    renderSummary();
   }
 }
 
@@ -315,7 +393,11 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 hideSkipsEl.addEventListener("change", render);
-selectModeEl.addEventListener("click", () => setSelectMode(!selectMode));
+selectModeEl.addEventListener("click", () => {
+  statusMessage = "";
+  setSelectMode(!selectMode);
+});
+generateSelectedEl.addEventListener("click", () => void generateSelected());
 clearSelectedEl.addEventListener("click", () => void clearSelected());
 
 void loadEntries();

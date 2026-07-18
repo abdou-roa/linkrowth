@@ -39,6 +39,14 @@ export interface CreateSuggestionResponse {
   status: string;
 }
 
+export interface CreateSuggestionsBatchBody {
+  items: CreateSuggestionBody[];
+}
+
+export interface CreateSuggestionsBatchResponse {
+  results: CreateSuggestionResponse[];
+}
+
 export interface ApiErrorBody {
   error?: string;
   message?: string;
@@ -90,6 +98,36 @@ export async function createSuggestion(
   const ok = data as CreateSuggestionResponse;
   if (!ok.jobId) {
     throw new Error("API response missing jobId");
+  }
+  return ok;
+}
+
+export async function createSuggestionsBatch(
+  body: CreateSuggestionsBatchBody,
+): Promise<CreateSuggestionsBatchResponse> {
+  const res = await fetch(`${apiBaseUrl()}/v1/suggestions/batch`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  const data = (await res.json().catch(() => ({}))) as
+    | CreateSuggestionsBatchResponse
+    | ApiErrorBody;
+
+  if (!res.ok) {
+    const err = data as ApiErrorBody;
+    throw new Error(
+      err.message || err.error || `API error ${res.status}`,
+    );
+  }
+
+  const ok = data as CreateSuggestionsBatchResponse;
+  if (!Array.isArray(ok.results)) {
+    throw new Error("API response missing results");
   }
   return ok;
 }

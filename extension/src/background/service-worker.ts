@@ -1,10 +1,17 @@
 import { JobQueue } from "../shared/queue";
-import { createSuggestion } from "../shared/api";
+import {
+  createSuggestion,
+  createSuggestionsBatch,
+  type CreateSuggestionBody,
+} from "../shared/api";
 import { MessageType, isExtensionMessage } from "../shared/messages";
 import type { ExtensionMessage, TriageEntry } from "../shared/messages";
 import { scoreFeedPost } from "../shared/scoring";
 import { triageStore } from "../shared/store";
 import type { FeedPost } from "../shared/types";
+
+/** Keep in sync with API MAX_BATCH_ITEMS. */
+const MAX_BATCH_ITEMS = 50;
 
 const queue = new JobQueue(2);
 const inFlight = new Set<string>();
@@ -59,12 +66,42 @@ async function handleMessage(
     case MessageType.GENERATE_SUGGESTION:
       return enqueueSuggestion(message.feedPostId, message.notes);
 
+    case MessageType.GENERATE_SUGGESTIONS_BATCH:
+      return enqueueSuggestionsBatch(message.feedPostIds, message.notes);
+
     case MessageType.REMOVE_TRIAGE:
       return removeTriageEntries(message.feedPostIds);
 
     default:
       return;
   }
+}
+
+function toCreateSuggestionBody(
+  entry: TriageEntry,
+  notes?: string,
+): CreateSuggestionBody {
+  const { triage, post } = entry;
+  return {
+    feedPost: {
+      id: post.id,
+      url: post.url,
+      text: post.text,
+      author: post.author,
+      metrics: post.metrics,
+      comments: post.comments,
+      ageText: post.ageText,
+      extractedAt: post.extractedAt,
+    },
+    triage: {
+      status: triage.status,
+      score: triage.score,
+      reasons: triage.reasons,
+      error: triage.error,
+      scoredAt: triage.scoredAt,
+    },
+    notes: notes?.trim() ? notes.trim() : undefined,
+  };
 }
 
 async function removeTriageEntries(
@@ -116,27 +153,7 @@ async function enqueueSuggestion(
   }
 
   try {
-    const { triage, post } = entry;
-    const result = await createSuggestion({
-      feedPost: {
-        id: post.id,
-        url: post.url,
-        text: post.text,
-        author: post.author,
-        metrics: post.metrics,
-        comments: post.comments,
-        ageText: post.ageText,
-        extractedAt: post.extractedAt,
-      },
-      triage: {
-        status: triage.status,
-        score: triage.score,
-        reasons: triage.reasons,
-        error: triage.error,
-        scoredAt: triage.scoredAt,
-      },
-      notes: notes?.trim() ? notes.trim() : undefined,
-    });
+    const result = await createSuggestion(toCreateSuggestionBody(entry, notes));
 
     return {
       type: MessageType.GENERATE_SUGGESTION_RESULT,
@@ -152,6 +169,80 @@ async function enqueueSuggestion(
       type: MessageType.GENERATE_SUGGESTION_RESULT,
       ok: false,
       feedPostId,
+      error: msg,
+    };
+  }
+}
+
+async function enqueueSuggestionsBatch(
+  feedPostIds: string[],
+  notes?: string,
+): Promise<Record<string, unknown>> {
+  const ids = [...new Set(feedPostIds.filter(Boolean))];
+
+  if (ids.length === 0) {
+    return {
+      type: MessageType.GENERATE_SUGGESTIONS_BATCH_RESULT,
+      ok: false,
+      feedPostIds: [],
+      error: "No posts selected",
+    };
+  }
+
+  if (ids.length > MAX_BATCH_ITEMS) {
+    return {
+      type: MessageType.GENERATE_SUGGESTIONS_BATCH_RESULT,
+      ok: false,
+      feedPostIds: ids,
+      error: `Select at most ${MAX_BATCH_ITEMS} posts at a time`,
+    };
+  }
+
+  const items: CreateSuggestionBody[] = [];
+  const missing: string[] = [];
+
+  for (const feedPostId of ids) {
+    const entry = await triageStore.get(feedPostId);
+    if (!entry) {
+      missing.push(feedPostId);
+      continue;
+    }
+    items.push(toCreateSuggestionBody(entry, notes));
+  }
+
+  if (missing.length > 0) {
+    return {
+      type: MessageType.GENERATE_SUGGESTIONS_BATCH_RESULT,
+      ok: false,
+      feedPostIds: ids,
+      error: `${missing.length} selected post(s) not found in triage store — scroll them into view first`,
+    };
+  }
+
+  try {
+    const { results } = await createSuggestionsBatch({ items });
+    return {
+      type: MessageType.GENERATE_SUGGESTIONS_BATCH_RESULT,
+      ok: true,
+      feedPostIds: ids,
+      results: results.map((r) => ({
+        feedPostId: r.postId,
+        jobId: r.jobId,
+        status: r.status,
+      })),
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn(
+      "%c🔗 Linkrowth",
+      "font-weight:bold",
+      "— batch suggestion enqueue failed ❌",
+      msg,
+    );
+    return {
+      type: MessageType.GENERATE_SUGGESTIONS_BATCH_RESULT,
+      ok: false,
+      feedPostIds: ids,
       error: msg,
     };
   }

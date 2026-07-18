@@ -1,4 +1,12 @@
-import type { CreateSuggestionRequest, FeedPostInput, TriageInput } from "../../types/suggestions";
+import type {
+  CreateSuggestionRequest,
+  CreateSuggestionsBatchRequest,
+  FeedPostInput,
+  TriageInput,
+} from "../../types/suggestions";
+
+/** Max posts accepted in one POST /v1/suggestions/batch call. */
+export const MAX_BATCH_ITEMS = 50;
 
 export class ValidationError extends Error {
   constructor(message: string) {
@@ -130,6 +138,36 @@ export function parseCreateSuggestionRequest(body: unknown): CreateSuggestionReq
     triage: parseTriage(body.triage),
     notes: notes?.trim() ? notes.trim() : undefined,
   };
+}
+
+export function parseCreateSuggestionsBatchRequest(
+  body: unknown
+): CreateSuggestionsBatchRequest {
+  if (!isPlainObject(body)) {
+    throw new ValidationError("Request body must be a JSON object");
+  }
+  if (!Array.isArray(body.items)) {
+    throw new ValidationError("items must be an array");
+  }
+  if (body.items.length === 0) {
+    throw new ValidationError("items must not be empty");
+  }
+  if (body.items.length > MAX_BATCH_ITEMS) {
+    throw new ValidationError(`items must contain at most ${MAX_BATCH_ITEMS} entries`);
+  }
+
+  const items = body.items.map((item, i) => {
+    try {
+      return parseCreateSuggestionRequest(item);
+    } catch (err) {
+      if (err instanceof ValidationError) {
+        throw new ValidationError(`items[${i}]: ${err.message}`);
+      }
+      throw err;
+    }
+  });
+
+  return { items };
 }
 
 const UUID_RE =
