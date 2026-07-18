@@ -10,6 +10,11 @@ export const MessageType = {
   RETRY_TRIAGE: "retry_triage",
   OPEN_SIDE_PANEL: "open_side_panel",
   FOCUS_POST: "focus_post",
+  GENERATE_SUGGESTION: "generate_suggestion",
+  GENERATE_SUGGESTION_RESULT: "generate_suggestion_result",
+  REMOVE_TRIAGE: "remove_triage",
+  REMOVE_TRIAGE_RESULT: "remove_triage_result",
+  TRIAGE_REMOVED: "triage_removed",
 } as const;
 
 export type MessageType = (typeof MessageType)[keyof typeof MessageType];
@@ -48,6 +53,38 @@ export interface FocusPostMessage {
   url?: string;
 }
 
+export interface GenerateSuggestionMessage {
+  type: typeof MessageType.GENERATE_SUGGESTION;
+  feedPostId: string;
+  notes?: string;
+}
+
+export interface GenerateSuggestionResultMessage {
+  type: typeof MessageType.GENERATE_SUGGESTION_RESULT;
+  ok: boolean;
+  feedPostId: string;
+  jobId?: string;
+  status?: string;
+  error?: string;
+}
+
+export interface RemoveTriageMessage {
+  type: typeof MessageType.REMOVE_TRIAGE;
+  feedPostIds: string[];
+}
+
+export interface RemoveTriageResultMessage {
+  type: typeof MessageType.REMOVE_TRIAGE_RESULT;
+  ok: boolean;
+  feedPostIds: string[];
+  error?: string;
+}
+
+export interface TriageRemovedMessage {
+  type: typeof MessageType.TRIAGE_REMOVED;
+  feedPostIds: string[];
+}
+
 export type ExtensionMessage =
   | PostVisibleMessage
   | TriageUpdatedMessage
@@ -55,7 +92,12 @@ export type ExtensionMessage =
   | ListTriageResultMessage
   | RetryTriageMessage
   | OpenSidePanelMessage
-  | FocusPostMessage;
+  | FocusPostMessage
+  | GenerateSuggestionMessage
+  | GenerateSuggestionResultMessage
+  | RemoveTriageMessage
+  | RemoveTriageResultMessage
+  | TriageRemovedMessage;
 
 export function isExtensionMessage(value: unknown): value is ExtensionMessage {
   return (

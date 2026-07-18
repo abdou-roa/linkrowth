@@ -4,6 +4,8 @@ import manifest from "./manifest.config";
 
 export default defineConfig({
   plugins: [crx({ manifest })],
+  // Expose LINKROWTH_* from .env to import.meta.env (in addition to VITE_*).
+  envPrefix: ["VITE_", "LINKROWTH_"],
   build: {
     outDir: "dist",
     emptyOutDir: true,

@@ -36,6 +36,15 @@ export class TriageStore {
     }
   }
 
+  async removeMany(feedPostIds: string[]): Promise<void> {
+    if (feedPostIds.length === 0) return;
+    const map = await this.asMap();
+    for (const id of feedPostIds) {
+      map.delete(id);
+    }
+    await this.write(map);
+  }
+
   private async asMap(): Promise<Map<string, TriageEntry>> {
     const fromChrome = await this.readChrome();
     if (fromChrome) {

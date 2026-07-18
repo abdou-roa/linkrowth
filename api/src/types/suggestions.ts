@@ -40,6 +40,8 @@ export interface TriageInput {
 export interface CreateSuggestionRequest {
   feedPost: FeedPostInput;
   triage?: TriageInput;
+  /** Optional user notes / angle for the suggestion (empty = quick suggestion). */
+  notes?: string;
 }
 
 export type SuggestionJobStatus = "queued" | "running" | "succeeded" | "failed";

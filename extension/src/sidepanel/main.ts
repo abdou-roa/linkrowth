@@ -14,31 +14,50 @@ const listEl = document.getElementById("list") as HTMLUListElement;
 const emptyEl = document.getElementById("empty") as HTMLParagraphElement;
 const summaryEl = document.getElementById("summary") as HTMLParagraphElement;
 const hideSkipsEl = document.getElementById("hide-skips") as HTMLInputElement;
-const refreshEl = document.getElementById("refresh") as HTMLButtonElement;
+const selectModeEl = document.getElementById("select-mode") as HTMLButtonElement;
+const clearSelectedEl = document.getElementById(
+  "clear-selected",
+) as HTMLButtonElement;
 
 let entries: TriageEntry[] = [];
+let selectMode = false;
+const selectedIds = new Set<string>();
 
-async function refresh(): Promise<void> {
+async function loadEntries(): Promise<void> {
   const response = await chrome.runtime.sendMessage({
     type: MessageType.LIST_TRIAGE,
   });
   if (response?.type === MessageType.LIST_TRIAGE_RESULT) {
     entries = response.entries ?? [];
+    pruneSelection();
     render();
   }
 }
 
-function render(): void {
+function pruneSelection(): void {
+  const validIds = new Set(entries.map((e) => e.post.id));
+  for (const id of selectedIds) {
+    if (!validIds.has(id)) selectedIds.delete(id);
+  }
+}
+
+function visibleEntries(): TriageEntry[] {
   const hideSkips = hideSkipsEl.checked;
-  const visible = entries.filter((e) => {
+  return entries.filter((e) => {
     if (hideSkips && e.triage.status === "not_worth_it") return false;
     if (hideSkips && e.triage.status === "failed") return false;
     return true;
   });
+}
+
+function render(): void {
+  const visible = visibleEntries();
 
   listEl.innerHTML = "";
+  listEl.classList.toggle("select-mode", selectMode);
   emptyEl.hidden = visible.length > 0;
   renderSummary();
+  updateToolbar();
 
   for (const entry of visible) {
     listEl.appendChild(buildRow(entry));
@@ -57,27 +76,52 @@ function renderSummary(): void {
     (e) => e.triage.status === "queued" || e.triage.status === "roasting",
   ).length;
 
-  const parts = [
-    `${worth} worth engaging`,
-    `${scanned} scanned`,
-  ];
+  const parts = [`${worth} worth engaging`, `${scanned} scanned`];
   if (analyzing > 0) parts.push(`${analyzing} analyzing`);
+  if (selectMode && selectedIds.size > 0) {
+    parts.push(`${selectedIds.size} selected`);
+  }
   summaryEl.textContent = parts.join(" · ");
 }
 
-function buildRow(entry: TriageEntry): HTMLButtonElement {
+function updateToolbar(): void {
+  selectModeEl.textContent = selectMode ? "Done" : "Select";
+  selectModeEl.setAttribute("aria-pressed", String(selectMode));
+  clearSelectedEl.disabled = !selectMode || selectedIds.size === 0;
+  clearSelectedEl.textContent =
+    selectedIds.size > 0 ? `Clear (${selectedIds.size})` : "Clear";
+}
+
+function buildRow(entry: TriageEntry): HTMLLIElement {
+  const item = document.createElement("li");
+  item.className = "list-item";
+
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "row";
   btn.dataset.postId = entry.post.id;
+  if (selectMode) {
+    btn.classList.add("row-selectable");
+    btn.setAttribute("aria-pressed", String(selectedIds.has(entry.post.id)));
+  }
+
+  if (selectMode) {
+    const checkbox = document.createElement("span");
+    checkbox.className = "row-checkbox";
+    checkbox.setAttribute("aria-hidden", "true");
+    checkbox.dataset.checked = String(selectedIds.has(entry.post.id));
+    btn.appendChild(checkbox);
+  }
+
+  const content = document.createElement("div");
+  content.className = "row-content";
 
   const status = entry.triage.status as TriageStatus;
   const statusClass = `status-${status}`;
   const author = entry.post.author?.name?.trim() || "Unknown author";
   const score = displayScore(entry.triage.score);
   const tier = scoreTier(entry.triage.score);
-  const showScore =
-    status === "worth_it" || status === "not_worth_it";
+  const showScore = status === "worth_it" || status === "not_worth_it";
 
   const meta = document.createElement("div");
   meta.className = "row-meta";
@@ -94,9 +138,7 @@ function buildRow(entry: TriageEntry): HTMLButtonElement {
     const scoreLabel = document.createElement("span");
     scoreLabel.className = "score-label";
     scoreLabel.textContent =
-      status === "worth_it"
-        ? TIER_LABEL[tier]
-        : `Score ${score}`;
+      status === "worth_it" ? TIER_LABEL[tier] : `Score ${score}`;
 
     const bar = document.createElement("div");
     bar.className = "score-bar";
@@ -133,19 +175,73 @@ function buildRow(entry: TriageEntry): HTMLButtonElement {
 
   const hint = document.createElement("p");
   hint.className = "row-hint";
-  hint.textContent = entry.post.url
-    ? "Click to jump to post"
-    : "Post link unavailable";
+  hint.textContent = selectMode
+    ? "Tap to select"
+    : entry.post.url
+      ? "Click to jump & generate comment"
+      : "Post link unavailable";
 
-  btn.append(meta, authorEl, snippet);
-  if (reasons.textContent) btn.appendChild(reasons);
-  btn.appendChild(hint);
+  content.append(meta, authorEl, snippet);
+  if (reasons.textContent) content.appendChild(reasons);
+  content.appendChild(hint);
+  btn.appendChild(content);
 
   btn.addEventListener("click", () => {
+    if (selectMode) {
+      toggleSelected(entry.post.id);
+      return;
+    }
     void focusPost(entry);
   });
 
-  return btn;
+  item.appendChild(btn);
+  return item;
+}
+
+function toggleSelected(postId: string): void {
+  if (selectedIds.has(postId)) selectedIds.delete(postId);
+  else selectedIds.add(postId);
+  render();
+}
+
+function setSelectMode(enabled: boolean): void {
+  selectMode = enabled;
+  if (!enabled) selectedIds.clear();
+  render();
+}
+
+async function clearSelected(): Promise<void> {
+  if (selectedIds.size === 0) return;
+
+  const feedPostIds = [...selectedIds];
+  clearSelectedEl.disabled = true;
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: MessageType.REMOVE_TRIAGE,
+      feedPostIds,
+    });
+
+    if (!response?.ok) {
+      console.warn(
+        "%c🔗 Linkrowth",
+        "font-weight:bold",
+        "— clear failed ❌",
+        response?.error,
+      );
+      updateToolbar();
+      return;
+    }
+
+    const removed = new Set(response.feedPostIds ?? feedPostIds);
+    entries = entries.filter((e) => !removed.has(e.post.id));
+    selectedIds.clear();
+    selectMode = false;
+    render();
+  } catch (error) {
+    console.warn("%c🔗 Linkrowth", "font-weight:bold", "— clear failed ❌", error);
+    updateToolbar();
+  }
 }
 
 async function focusPost(entry: TriageEntry): Promise<void> {
@@ -194,21 +290,32 @@ async function focusPost(entry: TriageEntry): Promise<void> {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (!isExtensionMessage(message)) return;
-  if (message.type !== MessageType.TRIAGE_UPDATED) return;
 
-  const idx = entries.findIndex((e) => e.post.id === message.entry.post.id);
-  if (idx >= 0) entries[idx] = message.entry;
-  else entries.push(message.entry);
-  entries.sort((a, b) => {
-    const rank = (s: string) => (s === "worth_it" ? 0 : s === "failed" ? 2 : 1);
-    const byStatus = rank(a.triage.status) - rank(b.triage.status);
-    if (byStatus !== 0) return byStatus;
-    return b.triage.score - a.triage.score;
-  });
-  render();
+  if (message.type === MessageType.TRIAGE_UPDATED) {
+    const idx = entries.findIndex((e) => e.post.id === message.entry.post.id);
+    if (idx >= 0) entries[idx] = message.entry;
+    else entries.push(message.entry);
+    entries.sort((a, b) => {
+      const rank = (s: string) => (s === "worth_it" ? 0 : s === "failed" ? 2 : 1);
+      const byStatus = rank(a.triage.status) - rank(b.triage.status);
+      if (byStatus !== 0) return byStatus;
+      return b.triage.score - a.triage.score;
+    });
+    pruneSelection();
+    render();
+    return;
+  }
+
+  if (message.type === MessageType.TRIAGE_REMOVED) {
+    const removed = new Set(message.feedPostIds);
+    entries = entries.filter((e) => !removed.has(e.post.id));
+    for (const id of removed) selectedIds.delete(id);
+    render();
+  }
 });
 
 hideSkipsEl.addEventListener("change", render);
-refreshEl.addEventListener("click", () => void refresh());
+selectModeEl.addEventListener("click", () => setSelectMode(!selectMode));
+clearSelectedEl.addEventListener("click", () => void clearSelected());
 
-void refresh();
+void loadEntries();

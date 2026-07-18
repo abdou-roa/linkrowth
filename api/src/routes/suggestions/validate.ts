@@ -124,9 +124,11 @@ export function parseCreateSuggestionRequest(body: unknown): CreateSuggestionReq
   if (!isPlainObject(body)) {
     throw new ValidationError("Request body must be a JSON object");
   }
+  const notes = optionalString(body.notes, "notes");
   return {
     feedPost: parseFeedPost(body.feedPost),
     triage: parseTriage(body.triage),
+    notes: notes?.trim() ? notes.trim() : undefined,
   };
 }
 
