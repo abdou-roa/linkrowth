@@ -3,8 +3,10 @@
 ```text
 linkrowth/
   agent/                 # engage CLI + agent — own package.json + .env
+  api/                   # Express API gateway — own package.json + .env
   extension/             # LinkedIn feed triage — own package.json + .env
-  docker-compose.yml     # shared infra only (Postgres)
+  helpers/               # DB schema + migrate script (applied on Postgres first boot)
+  docker-compose.yml     # Postgres + API containers
 ```
 
 The repo root has **no** `package.json` and **no** `.env`.  
@@ -33,6 +35,34 @@ Paste a post at the prompt, or pipe one in:
 
 ```bash
 echo "Your post text here…" | npm run engage
+```
+
+## API
+
+Express gateway (boilerplate). Runs as its own Docker service.  
+Docs: [`api/README.md`](api/README.md).
+
+```bash
+# From repo root — Postgres + API
+# Schema (helpers/schema.sql) is applied automatically on first Postgres boot.
+docker compose up -d --build
+
+# Re-apply schema to an existing volume (idempotent):
+./helpers/migrate.sh
+
+# Replace an older/incompatible schema:
+./helpers/migrate.sh --reset
+
+curl http://localhost:4000/health
+```
+
+Local (without Docker for the API process):
+
+```bash
+cd api
+cp .env.example .env
+npm install
+npm run dev          # http://localhost:4000
 ```
 
 ## Extension

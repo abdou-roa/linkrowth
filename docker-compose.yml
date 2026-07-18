@@ -10,11 +10,31 @@ services:
       - "5432:5432"
     volumes:
       - linkrowth_pg:/var/lib/postgresql/data
+      # Runs once on first DB init (empty volume). Re-run anytime with: ./helpers/migrate.sh
+      - ./helpers/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U linkrowth -d linkrowth"]
       interval: 5s
       timeout: 5s
       retries: 10
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: linkrowth-api
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: "4000"
+      NODE_ENV: production
+      DATABASE_URL: postgresql://linkrowth:linkrowth@postgres:5432/linkrowth
+      # Override in production: API_KEY=$(openssl rand -hex 32) docker compose up
+      API_KEY: ${API_KEY:-dev-change-me}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   linkrowth_pg:
