@@ -1,3 +1,0 @@
--- Deprecated: agent no longer owns its own DDL.
--- Source of truth: ../../helpers/schema.sql (posts, suggestion_jobs, suggestion_runs).
--- Apply via: npm run db:migrate (reads helpers/schema.sql).

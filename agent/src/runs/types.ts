@@ -16,6 +16,4 @@ export interface RunRecord {
 
 export interface RunRepository {
   save(run: RunRecord): Promise<RunRecord>;
-  getById(id: string): Promise<RunRecord | null>;
-  list(limit?: number): Promise<RunRecord[]>;
 }

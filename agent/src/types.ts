@@ -1,4 +1,4 @@
-export type LlmProvider = "openai" | "gemini" | "anthropic" | "kimi";
+export type LlmProvider = "openai" | "gemini";
 
 /** Author fields aligned with helpers/schema.sql posts.author_* columns. */
 export interface PostAuthor {
@@ -35,13 +35,8 @@ export interface Post {
 }
 
 export interface UserContext {
-  niche: string;
-  positioning: string;
-  targetAudience: string;
-  background?: string;
   proofPoints?: string[];
   opinions?: string[];
-  avoid?: string[];
   voiceSamples?: string[];
   voiceNotes?: string;
 }

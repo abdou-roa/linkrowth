@@ -1,5 +1,3 @@
-//evals
-
 export interface JudgeResult {
   pass: boolean;
   reasoning: string;
@@ -15,6 +13,4 @@ export interface EvalDataset {
   id: string;
   postText: string;
   category: "Technical" | "Informal" | "Achievement";
-  personalNotes: string  
 }
-

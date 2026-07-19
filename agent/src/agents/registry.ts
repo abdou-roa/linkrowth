@@ -8,11 +8,7 @@ const agents = new Map<string, Agent>([
   [ONE_SHOT_ENGAGE_AGENT_ID, oneShotEngageAgent],
 ]);
 
-export const DEFAULT_AGENT_ID = ONE_SHOT_ENGAGE_AGENT_ID;
-
-export function registerAgent(agent: Agent): void {
-  agents.set(agent.id, agent);
-}
+const DEFAULT_AGENT_ID = ONE_SHOT_ENGAGE_AGENT_ID;
 
 export function getAgent(id?: string): Agent {
   const agentId = id ?? process.env.LINKROWTH_AGENT ?? DEFAULT_AGENT_ID;

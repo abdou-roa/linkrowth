@@ -82,7 +82,7 @@ function syntheticStepsFromResult(result: EngageResult): ReasoningStep[] {
   return steps;
 }
 
-export class OneShotEngageAgent implements Agent {
+class OneShotEngageAgent implements Agent {
   readonly id = ONE_SHOT_ENGAGE_AGENT_ID;
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {

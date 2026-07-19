@@ -15,31 +15,23 @@ export interface EnvConfig {
   provider: LlmProvider;
   openai: ProviderConfig;
   gemini: ProviderConfig;
-  anthropic: ProviderConfig;
-  kimi: ProviderConfig;
 }
 
-const PROVIDERS: LlmProvider[] = ["openai", "gemini", "anthropic", "kimi"];
+const PROVIDERS: LlmProvider[] = ["openai", "gemini"];
 
 const PROVIDER_ENV_VARS: Record<LlmProvider, string> = {
   openai: "OPENAI_API_KEY",
   gemini: "GEMINI_API_KEY",
-  anthropic: "ANTHROPIC_API_KEY",
-  kimi: "KIMI_API_KEY",
 };
 
 const DEFAULT_MODELS: Record<LlmProvider, string> = {
   openai: "gpt-4o-mini",
   gemini: "gemini-2.5-flash",
-  anthropic: "claude-sonnet-4-6",
-  kimi: "moonshot-v1-8k",
 };
 
 const MODEL_ENV_VARS: Record<LlmProvider, string> = {
   openai: "LINKROWTH_OPENAI_MODEL",
   gemini: "LINKROWTH_GEMINI_MODEL",
-  anthropic: "LINKROWTH_ANTHROPIC_MODEL",
-  kimi: "LINKROWTH_KIMI_MODEL",
 };
 
 let cached: EnvConfig | null = null;
@@ -65,15 +57,13 @@ function buildProviderConfig(provider: LlmProvider): ProviderConfig {
   };
 }
 
-export function getEnv(): EnvConfig {
+function getEnv(): EnvConfig {
   if (cached) return cached;
 
   cached = {
     provider: readProvider(process.env.LINKROWTH_PROVIDER),
     openai: buildProviderConfig("openai"),
     gemini: buildProviderConfig("gemini"),
-    anthropic: buildProviderConfig("anthropic"),
-    kimi: buildProviderConfig("kimi"),
   };
 
   return cached;

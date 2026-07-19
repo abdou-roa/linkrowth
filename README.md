@@ -14,16 +14,17 @@ Work inside each package. They do not import each other; connect later via HTTP.
 
 ## Agent
 
-**Requirements:** Node.js 18+, Docker, an API key for your chosen provider (OpenAI, Gemini, Anthropic, or Kimi).
+**Requirements:** Node.js 18+, Docker, an API key for your chosen provider (OpenAI or Gemini).
 
 ```bash
 cd agent
 cp .env.example .env                           # add your API key (+ DATABASE_URL)
-cp config/user.example.json config/user.json   # edit niche, positioning, audience
+cp config/user.example.json config/user.json   # edit voice notes, samples, substance
 npm install
 
-npm run db:up                                  # Postgres via root docker-compose.yml
-npm run db:migrate                             # apply helpers/schema.sql (posts, suggestion_jobs, suggestion_runs)
+# From repo root: start Postgres, then apply helpers/schema.sql
+# docker compose up -d
+# ./helpers/migrate.sh
 
 npm run build
 npm run engage
