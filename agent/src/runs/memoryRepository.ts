@@ -10,6 +10,7 @@ export class InMemoryRunRepository implements RunRepository {
     const record: RunRecord = {
       ...run,
       id: run.id || randomUUID(),
+      jobId: run.jobId || randomUUID(),
       postId,
       post: { ...run.post, id: postId },
     };

@@ -4,12 +4,15 @@ import { getAgentRoot } from "../paths";
 import { closePool, getPool } from "./client";
 
 async function migrate(): Promise<void> {
-  const schemaPath = join(getAgentRoot(), "db", "schema.sql");
+  // Unified schema (posts, suggestion_jobs, suggestion_runs) — source of truth.
+  const schemaPath = join(getAgentRoot(), "..", "helpers", "schema.sql");
   const sql = readFileSync(schemaPath, "utf-8");
   const pool = getPool();
 
   await pool.query(sql);
-  console.log("Migration complete: posts + runs ready.");
+  console.log(
+    "Migration complete: posts, suggestion_jobs, suggestion_runs ready."
+  );
 }
 
 migrate()

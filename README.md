@@ -23,13 +23,13 @@ cp config/user.example.json config/user.json   # edit niche, positioning, audien
 npm install
 
 npm run db:up                                  # Postgres via root docker-compose.yml
-npm run db:migrate                             # create posts + runs tables
+npm run db:migrate                             # apply helpers/schema.sql (posts, suggestion_jobs, suggestion_runs)
 
 npm run build
 npm run engage
 ```
 
-`engage` persists each post and run (including reasoning steps as JSON) to Postgres. It requires `DATABASE_URL` and a running database — there is no in-memory fallback.
+`engage` persists each post plus a `suggestion_jobs` / `suggestion_runs` row (reasoning steps as JSON) to Postgres. It requires `DATABASE_URL` and a running database — there is no in-memory fallback. If you still have the old agent-only `runs` / `author_role` tables, run `./helpers/migrate.sh --reset` from the repo root.
 
 Paste a post at the prompt, or pipe one in:
 

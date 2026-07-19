@@ -82,7 +82,7 @@ function buildRubric(hasVoiceContext: boolean): string {
 
 export function buildEngagePrompt(post: Post, context: UserContext): LlmPrompt {
   const authorLine = post.author?.name
-    ? `Author: ${post.author.name}${post.author.role ? ` (${post.author.role})` : ""}`
+    ? `Author: ${post.author.name}${post.author.headline ? ` (${post.author.headline})` : ""}`
     : "";
 
   const voiceSection = buildVoiceSection(context);
