@@ -7,11 +7,11 @@ import type { Post, UserContext } from "../types";
 import { createPostgresRunRepository } from "./postgresRepository";
 import type { RunRecord, RunRepository } from "./types";
 
-export function loadUserContext(): UserContext {
+function loadUserContext(): UserContext {
   const configPath = join(getAgentRoot(), "config", "user.json");
   if (!existsSync(configPath)) {
     throw new Error(
-      "Missing agent/config/user.json. Copy agent/config/user.example.json and fill in your niche, positioning, and target audience."
+      "Missing agent/config/user.json. Copy agent/config/user.example.json and fill in your voice and substance fields."
     );
   }
 

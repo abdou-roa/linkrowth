@@ -16,10 +16,7 @@
     "build": "tsc -p tsconfig.json",
     "engage": "node dist/cli.js engage",
     "dev": "tsx src/cli.ts engage",
-    "eval": "tsx evals/runEvaluation.ts",
-    "db:up": "docker compose -f ../docker-compose.yml up -d",
-    "db:down": "docker compose -f ../docker-compose.yml down",
-    "db:migrate": "tsx src/db/migrate.ts"
+    "eval": "tsx evals/runEvaluation.ts"
   },
   "dependencies": {
     "@google/genai": "^1.10.0",

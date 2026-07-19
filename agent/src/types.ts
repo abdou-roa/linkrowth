@@ -1,19 +1,42 @@
-export type LlmProvider = "openai" | "gemini" | "anthropic" | "kimi";
+export type LlmProvider = "openai" | "gemini";
 
+/** Author fields aligned with helpers/schema.sql posts.author_* columns. */
+export interface PostAuthor {
+  name?: string;
+  headline?: string;
+  profileUrl?: string;
+  username?: string;
+}
+
+export interface PostMetrics {
+  likes?: number;
+  commentsCount?: number;
+}
+
+export interface PostComment {
+  author?: string;
+  text: string;
+  likes?: number;
+}
+
+/**
+ * Feed post shape aligned with helpers/schema.sql `posts`.
+ * CLI may pass only `{ text }`; id is assigned before persistence.
+ */
 export interface Post {
   id?: string;
+  url?: string;
   text: string;
-  author?: { name?: string; role?: string };
+  author?: PostAuthor;
+  metrics?: PostMetrics;
+  comments?: PostComment[];
+  ageText?: string;
+  extractedAt?: string;
 }
 
 export interface UserContext {
-  niche: string;
-  positioning: string;
-  targetAudience: string;
-  background?: string;
   proofPoints?: string[];
   opinions?: string[];
-  avoid?: string[];
   voiceSamples?: string[];
   voiceNotes?: string;
 }

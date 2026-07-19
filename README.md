@@ -110,22 +110,25 @@ The repo root has **no** `package.json` and **no** `.env`. Each package is indep
 
 ### 1. Agent (the brain)
 
-**Requires:** Node.js ≥ 18, Docker, and an API key for your chosen provider (OpenAI, Gemini, Anthropic, or Kimi).
+**Requirements:** Node.js 18+, Docker, an API key for your chosen provider (OpenAI or Gemini).
 
 ```bash
 cd agent
 cp .env.example .env                           # add your API key (+ DATABASE_URL)
-cp config/user.example.json config/user.json   # edit niche, positioning, audience
+cp config/user.example.json config/user.json   # edit voice notes, samples, substance
 npm install
 
-npm run db:up                                  # Postgres via root docker-compose.yml
-npm run db:migrate                             # create posts + runs tables
+# From repo root: start Postgres, then apply helpers/schema.sql
+# docker compose up -d
+# ./helpers/migrate.sh
 
 npm run build
 npm run engage                                 # paste a post, get a suggestion
 ```
 
-Pipe a post straight in:
+`engage` persists each post plus a `suggestion_jobs` / `suggestion_runs` row (reasoning steps as JSON) to Postgres. It requires `DATABASE_URL` and a running database — there is no in-memory fallback. If you still have the old agent-only `runs` / `author_role` tables, run `./helpers/migrate.sh --reset` from the repo root.
+
+Paste a post at the prompt, or pipe one in:
 
 ```bash
 echo "Your post text here…" | npm run engage

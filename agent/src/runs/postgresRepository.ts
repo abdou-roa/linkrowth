@@ -1,87 +1,8 @@
-import type { Pool, QueryResultRow } from "pg";
-import type { ReasoningStep } from "../agents/types";
+import type { Pool } from "pg";
 import { getPool } from "../db/client";
-import type { EngageResult, Post } from "../types";
 import type { RunRecord, RunRepository } from "./types";
 
-interface RunJoinRow extends QueryResultRow {
-  id: string;
-  post_id: string;
-  agent_id: string;
-  suggestion: string;
-  rationale: string;
-  category: string | null;
-  core_subject: string | null;
-  applied_playbook: string | null;
-  value_hook: string | null;
-  voice_check: string | null;
-  steps: ReasoningStep[] | string;
-  created_at: Date;
-  post_text: string;
-  author_name: string | null;
-  author_role: string | null;
-}
-
-function parseSteps(raw: ReasoningStep[] | string): ReasoningStep[] {
-  if (Array.isArray(raw)) return raw;
-  return JSON.parse(raw) as ReasoningStep[];
-}
-
-function rowToRecord(row: RunJoinRow): RunRecord {
-  const post: Post = {
-    id: row.post_id,
-    text: row.post_text,
-  };
-  if (row.author_name || row.author_role) {
-    post.author = {
-      name: row.author_name ?? undefined,
-      role: row.author_role ?? undefined,
-    };
-  }
-
-  const result: EngageResult = {
-    suggestion: row.suggestion,
-    rationale: row.rationale,
-    category: row.category ?? undefined,
-    coreSubject: row.core_subject ?? undefined,
-    appliedPlaybook: row.applied_playbook ?? undefined,
-    valueHook: row.value_hook ?? undefined,
-    voiceCheck: row.voice_check ?? undefined,
-  };
-
-  return {
-    id: row.id,
-    postId: row.post_id,
-    agentId: row.agent_id,
-    post,
-    result,
-    steps: parseSteps(row.steps),
-    createdAt: row.created_at.toISOString(),
-  };
-}
-
-const RUN_SELECT = `
-  SELECT
-    r.id,
-    r.post_id,
-    r.agent_id,
-    r.suggestion,
-    r.rationale,
-    r.category,
-    r.core_subject,
-    r.applied_playbook,
-    r.value_hook,
-    r.voice_check,
-    r.steps,
-    r.created_at,
-    p.text AS post_text,
-    p.author_name,
-    p.author_role
-  FROM runs r
-  INNER JOIN posts p ON p.id = r.post_id
-`;
-
-export class PostgresRunRepository implements RunRepository {
+class PostgresRunRepository implements RunRepository {
   constructor(private readonly pool: Pool = getPool()) {}
 
   async save(run: RunRecord): Promise<RunRecord> {
@@ -89,36 +10,81 @@ export class PostgresRunRepository implements RunRepository {
     try {
       await client.query("BEGIN");
 
+      const extractedAt = run.post.extractedAt
+        ? new Date(run.post.extractedAt)
+        : null;
+      const comments = JSON.stringify(run.post.comments ?? []);
+
       await client.query(
-        `INSERT INTO posts (id, text, author_name, author_role, created_at)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO posts (
+           id, url, text,
+           author_name, author_headline, author_profile_url, author_username,
+           likes, comments_count, comments, age_text, extracted_at, updated_at
+         ) VALUES (
+           $1, $2, $3,
+           $4, $5, $6, $7,
+           $8, $9, $10::jsonb, $11, $12, NOW()
+         )
          ON CONFLICT (id) DO UPDATE SET
+           url = EXCLUDED.url,
            text = EXCLUDED.text,
            author_name = EXCLUDED.author_name,
-           author_role = EXCLUDED.author_role`,
+           author_headline = EXCLUDED.author_headline,
+           author_profile_url = EXCLUDED.author_profile_url,
+           author_username = EXCLUDED.author_username,
+           likes = EXCLUDED.likes,
+           comments_count = EXCLUDED.comments_count,
+           comments = EXCLUDED.comments,
+           age_text = EXCLUDED.age_text,
+           extracted_at = EXCLUDED.extracted_at,
+           updated_at = NOW()`,
         [
           run.postId,
+          run.post.url ?? null,
           run.post.text,
           run.post.author?.name ?? null,
-          run.post.author?.role ?? null,
-          run.createdAt,
+          run.post.author?.headline ?? null,
+          run.post.author?.profileUrl ?? null,
+          run.post.author?.username ?? null,
+          run.post.metrics?.likes ?? null,
+          run.post.metrics?.commentsCount ?? null,
+          comments,
+          run.post.ageText ?? null,
+          extractedAt && !Number.isNaN(extractedAt.getTime())
+            ? extractedAt.toISOString()
+            : null,
         ]
       );
 
+      // suggestion_runs.job_id is required. CLI engage creates a terminal job;
+      // API/worker paths pass an existing jobId.
+      let jobId = run.jobId;
+      if (!jobId) {
+        const inserted = await client.query<{ id: string }>(
+          `INSERT INTO suggestion_jobs (
+             post_id, status, started_at, finished_at
+           ) VALUES ($1, 'succeeded', $2::timestamptz, $2::timestamptz)
+           RETURNING id`,
+          [run.postId, run.createdAt]
+        );
+        jobId = inserted.rows[0].id;
+      }
+
       await client.query(
-        `INSERT INTO runs (
-           id, post_id, agent_id,
+        `INSERT INTO suggestion_runs (
+           id, job_id, post_id, agent_id,
            suggestion, rationale,
            category, core_subject, applied_playbook, value_hook, voice_check,
            steps, created_at
          ) VALUES (
-           $1, $2, $3,
-           $4, $5,
-           $6, $7, $8, $9, $10,
-           $11::jsonb, $12
+           $1, $2, $3, $4,
+           $5, $6,
+           $7, $8, $9, $10, $11,
+           $12::jsonb, $13
          )`,
         [
           run.id,
+          jobId,
           run.postId,
           run.agentId,
           run.result.suggestion,
@@ -134,7 +100,7 @@ export class PostgresRunRepository implements RunRepository {
       );
 
       await client.query("COMMIT");
-      return run;
+      return { ...run, jobId };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -142,25 +108,8 @@ export class PostgresRunRepository implements RunRepository {
       client.release();
     }
   }
-
-  async getById(id: string): Promise<RunRecord | null> {
-    const result = await this.pool.query<RunJoinRow>(
-      `${RUN_SELECT} WHERE r.id = $1`,
-      [id]
-    );
-    const row = result.rows[0];
-    return row ? rowToRecord(row) : null;
-  }
-
-  async list(limit = 50): Promise<RunRecord[]> {
-    const result = await this.pool.query<RunJoinRow>(
-      `${RUN_SELECT} ORDER BY r.created_at DESC LIMIT $1`,
-      [limit]
-    );
-    return result.rows.map(rowToRecord);
-  }
 }
 
-export function createPostgresRunRepository(): PostgresRunRepository {
+export function createPostgresRunRepository(): RunRepository {
   return new PostgresRunRepository();
 }

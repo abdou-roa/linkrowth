@@ -27,15 +27,3 @@ export interface Agent {
   readonly id: string;
   run(input: AgentRunInput): Promise<AgentRunResult>;
 }
-
-export interface PipelineContext {
-  post: Post;
-  context: UserContext;
-  /** Mutable bag for step-to-step data within a pipeline run. */
-  state: Record<string, unknown>;
-}
-
-export type PipelineStep = {
-  name: string;
-  run: (ctx: PipelineContext) => Promise<unknown>;
-};
