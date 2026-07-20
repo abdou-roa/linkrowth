@@ -39,6 +39,21 @@ export interface CreateSuggestionResponse {
   status: string;
 }
 
+export interface SuggestionRunSummary {
+  suggestion: string | null;
+  rationale: string | null;
+  category: string | null;
+  agentId: string | null;
+}
+
+export interface GetSuggestionResponse {
+  jobId: string;
+  postId: string;
+  status: "queued" | "running" | "succeeded" | "failed" | string;
+  error: string | null;
+  run: SuggestionRunSummary | null;
+}
+
 export interface ApiErrorBody {
   error?: string;
   message?: string;
@@ -92,4 +107,62 @@ export async function createSuggestion(
     throw new Error("API response missing jobId");
   }
   return ok;
+}
+
+export async function getSuggestion(
+  jobId: string,
+): Promise<GetSuggestionResponse> {
+  const res = await fetch(
+    `${apiBaseUrl()}/v1/suggestions/${encodeURIComponent(jobId)}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey()}`,
+      },
+    },
+  );
+
+  const data = (await res.json().catch(() => ({}))) as
+    | GetSuggestionResponse
+    | ApiErrorBody;
+
+  if (!res.ok) {
+    const err = data as ApiErrorBody;
+    throw new Error(
+      err.message || err.error || `API error ${res.status}`,
+    );
+  }
+
+  const ok = data as GetSuggestionResponse;
+  if (!ok.jobId) {
+    throw new Error("API response missing jobId");
+  }
+  return ok;
+}
+
+const TERMINAL_STATUSES = new Set(["succeeded", "failed"]);
+
+/**
+ * Poll GET /v1/suggestions/:jobId until the job finishes or times out.
+ */
+export async function waitForSuggestion(
+  jobId: string,
+  options: { intervalMs?: number; timeoutMs?: number } = {},
+): Promise<GetSuggestionResponse> {
+  const intervalMs = options.intervalMs ?? 1000;
+  const timeoutMs = options.timeoutMs ?? 90_000;
+  const started = Date.now();
+
+  for (;;) {
+    const job = await getSuggestion(jobId);
+    if (TERMINAL_STATUSES.has(job.status)) {
+      return job;
+    }
+    if (Date.now() - started >= timeoutMs) {
+      throw new Error(
+        `Suggestion job timed out after ${Math.round(timeoutMs / 1000)}s (status: ${job.status})`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
 }

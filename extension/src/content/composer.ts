@@ -268,7 +268,7 @@ async function onGenerateClick(
 
   const notes = readEditorText(editor).trim();
   setButtonState(btn, "loading");
-  showStatus(status, "");
+  showStatus(status, "Generating…");
 
   try {
     const response = (await chrome.runtime.sendMessage({
@@ -277,18 +277,19 @@ async function onGenerateClick(
       notes: notes || undefined,
     })) as GenerateSuggestionResultMessage & { ok?: boolean; error?: string };
 
-    if (!response?.ok) {
+    if (!response?.ok || !response.suggestion) {
       setButtonState(btn, "error");
-      showStatus(status, response?.error || "Failed to queue suggestion");
+      showStatus(status, response?.error || "Failed to generate suggestion");
       return;
     }
 
-    setButtonState(btn, "queued");
+    writeEditorText(editor, response.suggestion);
+    setButtonState(btn, "idle");
     showStatus(
       status,
-      response.jobId
-        ? `Queued · ${response.jobId.slice(0, 8)}…`
-        : "Queued",
+      response.category
+        ? `Ready · ${response.category}`
+        : "Ready — review before posting",
     );
   } catch (error) {
     setButtonState(btn, "error");
@@ -299,27 +300,57 @@ async function onGenerateClick(
   }
 }
 
+function writeEditorText(editor: HTMLElement, text: string): void {
+  editor.focus();
+
+  if (
+    editor instanceof HTMLTextAreaElement ||
+    editor instanceof HTMLInputElement
+  ) {
+    editor.value = text;
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    syncEmptyClass(editor);
+    return;
+  }
+
+  // Quill / contenteditable: select all then insertText so LinkedIn sees the change.
+  const selection = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+
+  const inserted = document.execCommand("insertText", false, text);
+  if (!inserted) {
+    editor.textContent = text;
+    editor.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        data: text,
+        inputType: "insertText",
+      }),
+    );
+  }
+
+  syncEmptyClass(editor);
+}
+
 function setButtonState(
   btn: HTMLButtonElement,
-  state: "idle" | "loading" | "queued" | "error",
+  state: "idle" | "loading" | "error",
 ): void {
   btn.dataset.state = state;
-  btn.disabled = state === "loading" || state === "queued";
+  btn.disabled = state === "loading";
 
   switch (state) {
     case "loading":
       btn.textContent = "Generating…";
       break;
-    case "queued":
-      btn.textContent = "Queued";
-      break;
     case "error":
       btn.textContent = "Retry generate";
-      btn.disabled = false;
       break;
     default:
       btn.textContent = "Generate comment";
-      btn.disabled = false;
   }
 }
 

@@ -2,7 +2,7 @@
 
 Express gateway between the Chrome extension and the engage agent.
 
-**Status:** Postgres + Bearer auth + suggestion enqueue/poll endpoints. Engage worker not wired yet (jobs stay `queued`).
+**Status:** Postgres + Bearer auth + suggestion enqueue/poll endpoints. Engage runs **in-process** after enqueue (direct `@linkrowth/agent` import).
 
 Base URL (Docker / local default): `http://localhost:4000`
 
@@ -47,10 +47,10 @@ The `api` service depends on healthy Postgres and uses:
 
 ```text
 DATABASE_URL=postgresql://linkrowth:linkrowth@postgres:5432/linkrowth
-API_KEY=…   # optional override; Compose defaults to dev-change-me
 PORT=4000
 ```
 
+Secrets (`API_KEY`, `OPENAI_API_KEY`, …) come from `api/.env` and optionally `agent/.env` via Compose `env_file` — the same files local `npm run dev` uses. Copy from the `.env.example` files if needed.
 ### Local process (API on the host)
 
 ```bash
@@ -103,7 +103,7 @@ Full request/response reference: **[`ENDPOINTS.md`](./ENDPOINTS.md)**.
 | `POST` | `/v1/suggestions` | Yes | Enqueue suggestion job for a feed post |
 | `GET` | `/v1/suggestions/:jobId` | Yes | Poll job status (+ run when ready) |
 
-Engage worker is not wired yet — jobs stay `queued` and `run` stays `null` until then.
+Engage runs in-process after enqueue — poll until `status` is `succeeded` or `failed`.
 
 ---
 
@@ -149,19 +149,17 @@ curl -i -H "Authorization: Bearer dev-change-me" http://localhost:4000/v1/ping
 | `PORT` | `4000` | Host/container listen port (avoids clash with extension tooling on `3000`) |
 | `NODE_ENV` | `development` | `production` in Docker |
 | `DATABASE_URL` | (required) | Postgres connection string. Validated at process start |
-| `API_KEY` | (none) | Required for `/v1/*`. Docker Compose defaults to `dev-change-me` via `${API_KEY:-…}` — override in real deploys |
+| `API_KEY` | (none) | Required for `/v1/*`. Loaded from `api/.env` when using Docker Compose |
 
 ---
 
-## How engage will be invoked
+## How engage is invoked
 
-Not wired yet. Intended options (v1 likely the first or second):
+**In-process (current):** after a job is enqueued, the API background-calls `runEngage()` from `@linkrowth/agent`. The HTTP handler still returns immediately with `jobId`; the extension polls for the result.
 
-1. **In-process** — after commit, background-call `engage()` in the API process.
-2. **Worker + queue** — API only enqueues; a worker process calls `engage()` (Postgres poll or Kafka later).
-3. **Agent HTTP service** — separate process; API POSTs to it (probably overkill early).
+Requires the same LLM env vars as `agent/` (see `api/.env.example`) and `agent/config/user.json` (copy from `agent/config/user.example.json`).
 
-In all cases the HTTP handler returns quickly with `jobId`; the LLM work is async relative to the extension request.
+Future options: separate worker process, or agent HTTP service.
 
 ---
 

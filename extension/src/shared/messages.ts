@@ -65,6 +65,9 @@ export interface GenerateSuggestionResultMessage {
   feedPostId: string;
   jobId?: string;
   status?: string;
+  suggestion?: string;
+  rationale?: string;
+  category?: string;
   error?: string;
 }
 

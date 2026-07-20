@@ -99,6 +99,15 @@ class PostgresRunRepository implements RunRepository {
         ]
       );
 
+      if (run.jobId) {
+        await client.query(
+          `UPDATE suggestion_jobs
+           SET status = 'succeeded', finished_at = $2::timestamptz, error = NULL
+           WHERE id = $1`,
+          [run.jobId, run.createdAt]
+        );
+      }
+
       await client.query("COMMIT");
       return { ...run, jobId };
     } catch (error) {

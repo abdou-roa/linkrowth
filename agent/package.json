@@ -8,9 +8,22 @@
     "linkrowth": "./dist/cli.js"
   },
   "exports": {
-    "./engage": "./src/engage.ts",
-    "./llm": "./src/llm.ts",
-    "./types": "./src/types.ts"
+    "./engage": {
+      "types": "./dist/engage.d.ts",
+      "default": "./dist/engage.js"
+    },
+    "./runs": {
+      "types": "./dist/runs/service.d.ts",
+      "default": "./dist/runs/service.js"
+    },
+    "./llm": {
+      "types": "./dist/llm.d.ts",
+      "default": "./dist/llm.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "default": "./dist/types.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
