@@ -1,10 +1,8 @@
 import type { EngageResult, Post, UserContext } from "../types";
 
-export type StepStatus = "completed" | "failed";
-
 export interface ReasoningStep {
   name: string;
-  status: StepStatus;
+  status: "completed" | "failed";
   summary?: string;
   output?: unknown;
   error?: string;

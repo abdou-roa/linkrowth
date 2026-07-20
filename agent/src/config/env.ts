@@ -11,7 +11,7 @@ export interface ProviderConfig {
   apiKeyEnvVar: string;
 }
 
-export interface EnvConfig {
+interface EnvConfig {
   provider: LlmProvider;
   openai: ProviderConfig;
   gemini: ProviderConfig;
@@ -91,7 +91,7 @@ export function getDatabaseUrl(): string {
   const url = process.env.DATABASE_URL?.trim();
   if (!url) {
     throw new Error(
-      "Missing DATABASE_URL. Start Postgres (`npm run db:up`), copy DATABASE_URL from .env.example into .env, then run `npm run db:migrate`."
+      "Missing DATABASE_URL. Start Postgres (`docker compose up -d postgres`), copy DATABASE_URL from .env.example into .env, then run `./helpers/migrate.sh`."
     );
   }
   return url;
