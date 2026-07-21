@@ -23,7 +23,22 @@ export async function prepareGenerateComposer(
     return false;
   }
 
-  const editor = await waitForEditor(card, 2500);
+  const ok = await attachGenerateComposer(card, feedPostId);
+  if (ok) {
+    findEditor(composerRoot(card))?.focus();
+  }
+  return ok;
+}
+
+/**
+ * Wait for the comment editor (user already opened it) and wire Generate UI.
+ */
+export async function attachGenerateComposer(
+  card: HTMLElement,
+  feedPostId: string,
+): Promise<boolean> {
+  const root = composerRoot(card);
+  const editor = await waitForEditor(root, 2500);
   if (!editor) {
     console.warn(
       "%c🔗 Linkrowth",
@@ -35,48 +50,112 @@ export async function prepareGenerateComposer(
   }
 
   applyPlaceholder(editor);
-  injectGenerateUi(card, editor, feedPostId);
-  editor.focus();
+  injectGenerateUi(root, editor, feedPostId);
   return true;
 }
 
-async function openCommentBox(card: HTMLElement): Promise<boolean> {
-  if (findEditor(card)) return true;
+/**
+ * When the user opens a comment box via LinkedIn's Comment button, attach
+ * the Generate suggestion UI the same way side-panel focus does.
+ */
+export function observeNativeCommentOpens(): void {
+  document.addEventListener(
+    "click",
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
 
-  const commentBtn = findCommentButton(card);
+      const btn = target.closest("button");
+      if (!btn || !isCommentActionButton(btn)) return;
+
+      const card = resolveTaggedCard(btn);
+      const feedPostId = card?.dataset.linkrowthPostId;
+      if (!card || !feedPostId) return;
+
+      // Let LinkedIn open the box first, then wire our CTA.
+      void wait(0).then(() => attachGenerateComposer(card, feedPostId));
+    },
+    true,
+  );
+}
+
+async function openCommentBox(card: HTMLElement): Promise<boolean> {
+  const root = composerRoot(card);
+  if (findEditor(root)) return true;
+
+  const commentBtn = findCommentButton(root);
   if (!commentBtn) return false;
 
   commentBtn.click();
-  const editor = await waitForEditor(card, 2500);
+  const editor = await waitForEditor(root, 2500);
   return !!editor;
 }
 
+/** Outer listitem when present — comment box often mounts there. */
+function composerRoot(card: HTMLElement): HTMLElement {
+  const outer = card.closest(
+    'div[role="listitem"][componentkey*="FeedType"], article[data-id="main-feed-card"]',
+  );
+  return outer instanceof HTMLElement ? outer : card;
+}
+
 function findCommentButton(card: HTMLElement): HTMLElement | null {
-  const selectors = [
-    'button[aria-label*="Comment" i]',
-    'button[aria-label*="comment" i]',
-    'button.comment-button',
-    'button[data-control-name="comment"]',
-  ];
-
-  for (const sel of selectors) {
-    const btn = card.querySelector<HTMLElement>(sel);
-    if (btn) return btn;
-  }
-
-  // Fallback: social action buttons by visible label
   for (const btn of card.querySelectorAll<HTMLElement>("button")) {
-    const label = (
-      btn.getAttribute("aria-label") ||
-      btn.textContent ||
-      ""
-    ).trim();
-    if (/^comment\b/i.test(label) || /^comments?\b/i.test(label)) {
-      return btn;
-    }
+    if (isCommentActionButton(btn)) return btn;
+  }
+  return null;
+}
+
+/**
+ * True for the social-action "Comment" control — not reaction/count chrome
+ * like "42 comments".
+ */
+function isCommentActionButton(btn: HTMLElement): boolean {
+  if (btn.classList.contains(GENERATE_BTN_CLASS)) return false;
+
+  const aria = (btn.getAttribute("aria-label") || "").trim();
+  const text = (btn.textContent || "").replace(/\s+/g, " ").trim();
+
+  // Explicit LinkedIn hooks when present.
+  if (
+    btn.matches(
+      'button.comment-button, button[data-control-name="comment"], button[data-view-name*="comment-action" i]',
+    )
+  ) {
+    return true;
   }
 
-  return null;
+  // Action-bar Comment — reject pure count labels ("12 comments").
+  if (aria && isCommentActionLabel(aria)) return true;
+  if (text && isCommentActionLabel(text)) return true;
+
+  return false;
+}
+
+function isCommentActionLabel(raw: string): boolean {
+  const label = raw.replace(/\s+/g, " ").trim();
+  if (!label) return false;
+  // "Comment", "Comment on Jane's post", "Leave a comment"
+  if (/^(leave\s+a\s+)?comment(\s+on\b.*)?$/i.test(label)) return true;
+  // Visible action label is often just "Comment"
+  if (/^comment$/i.test(label)) return true;
+  return false;
+}
+
+/** Walk up from a control to the post card we tagged during extract. */
+function resolveTaggedCard(from: Element): HTMLElement | null {
+  const tagged = from.closest<HTMLElement>("[data-linkrowth-post-id]");
+  if (tagged) return tagged;
+
+  const outer = from.closest(
+    'div[role="listitem"][componentkey*="FeedType"], article[data-id="main-feed-card"], div.feed-shared-update-v2, article.feed-shared-update-v2',
+  );
+  if (!(outer instanceof HTMLElement)) return null;
+  return outer.querySelector<HTMLElement>("[data-linkrowth-post-id]");
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function findEditor(card: HTMLElement): HTMLElement | null {
