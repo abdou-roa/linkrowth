@@ -20,17 +20,27 @@ services:
 
   api:
     build:
-      context: ./api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: api/Dockerfile
     container_name: linkrowth-api
     ports:
       - "4000:4000"
+    # Loads API_KEY / LLM keys the same way as local `npm run dev`.
+    # Do not put API_KEY or OPENAI_API_KEY in `environment` below — empty
+    # Compose interpolations would override these and break auth.
+    env_file:
+      - path: api/.env
+        required: false
+      - path: agent/.env
+        required: false
     environment:
       PORT: "4000"
       NODE_ENV: production
+      # Must use the compose service hostname, not localhost from api/.env
       DATABASE_URL: postgresql://linkrowth:linkrowth@postgres:5432/linkrowth
-      # Override in production: API_KEY=$(openssl rand -hex 32) docker compose up
-      API_KEY: ${API_KEY:-dev-change-me}
+      LINKROWTH_PROVIDER: ${LINKROWTH_PROVIDER:-openai}
+      LINKROWTH_OPENAI_MODEL: ${LINKROWTH_OPENAI_MODEL:-gpt-4o-mini}
+      LINKROWTH_GEMINI_MODEL: ${LINKROWTH_GEMINI_MODEL:-gemini-2.5-flash}
     depends_on:
       postgres:
         condition: service_healthy

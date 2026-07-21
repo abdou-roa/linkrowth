@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { createSuggestionJob, getSuggestionJob } from "../../db/suggestions";
+import { processSuggestionJob } from "../../services/processSuggestionJob";
 import {
   parseCreateSuggestionRequest,
   parseJobId,
@@ -13,6 +14,13 @@ export function suggestionsRouter(): Router {
     try {
       const { feedPost, triage, notes } = parseCreateSuggestionRequest(req.body);
       const job = await createSuggestionJob(feedPost, triage, notes);
+
+      if (job.status === "queued") {
+        void processSuggestionJob(job.jobId, feedPost).catch((err) => {
+          console.error("[api] suggestion job processing failed", job.jobId, err);
+        });
+      }
+
       res.status(202).json(job);
     } catch (err) {
       if (err instanceof ValidationError) {

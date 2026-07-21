@@ -7,10 +7,13 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prebuild": "npm run build --prefix ../agent",
     "start": "node dist/index.js",
+    "predev": "npm run build --prefix ../agent",
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
+    "@linkrowth/agent": "file:../agent",
     "dotenv": "^17.2.0",
     "express": "^5.1.0",
     "pg": "^8.22.0"

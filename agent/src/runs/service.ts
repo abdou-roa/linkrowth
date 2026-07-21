@@ -4,6 +4,11 @@ import { randomUUID } from "node:crypto";
 import { getAgent } from "../agents/registry";
 import { getAgentRoot } from "../paths";
 import type { Post, UserContext } from "../types";
+import {
+  claimSuggestionJob,
+  failSuggestionJob,
+  JobNotClaimableError,
+} from "./jobStatus";
 import { createPostgresRunRepository } from "./postgresRepository";
 import type { RunRecord, RunRepository } from "./types";
 
@@ -23,6 +28,10 @@ export interface RunEngageOptions {
   context?: UserContext;
   repository?: RunRepository;
   agentId?: string;
+  /** Existing suggestion_jobs row from the API. Skips claim when the caller already claimed it. */
+  jobId?: string;
+  /** When true with jobId, skip the queued → running claim (caller already claimed). */
+  skipClaim?: boolean;
 }
 
 export async function runEngage(
@@ -32,21 +41,38 @@ export async function runEngage(
   const context = options.context ?? loadUserContext();
   const repository = options.repository ?? createPostgresRunRepository();
   const agent = getAgent(options.agentId);
+  const { jobId } = options;
 
-  const agentResult = await agent.run({ post, context });
+  if (jobId && !options.skipClaim) {
+    const claimed = await claimSuggestionJob(jobId);
+    if (!claimed) {
+      throw new JobNotClaimableError(jobId);
+    }
+  }
 
   const postId = post.id ?? randomUUID();
-  const createdAt = new Date().toISOString();
 
-  const record: RunRecord = {
-    id: randomUUID(),
-    postId,
-    agentId: agentResult.agentId,
-    post: { ...post, id: postId },
-    result: agentResult.result,
-    steps: agentResult.steps,
-    createdAt,
-  };
+  try {
+    const agentResult = await agent.run({ post, context });
+    const createdAt = new Date().toISOString();
 
-  return repository.save(record);
+    const record: RunRecord = {
+      id: randomUUID(),
+      jobId,
+      postId,
+      agentId: agentResult.agentId,
+      post: { ...post, id: postId },
+      result: agentResult.result,
+      steps: agentResult.steps,
+      createdAt,
+    };
+
+    return await repository.save(record);
+  } catch (err) {
+    if (jobId && !(err instanceof JobNotClaimableError)) {
+      const message = err instanceof Error ? err.message : String(err);
+      await failSuggestionJob(jobId, message);
+    }
+    throw err;
+  }
 }

@@ -1,5 +1,5 @@
 import { JobQueue } from "../shared/queue";
-import { createSuggestion } from "../shared/api";
+import { createSuggestion, waitForSuggestion } from "../shared/api";
 import { MessageType, isExtensionMessage } from "../shared/messages";
 import type { ExtensionMessage, TriageEntry } from "../shared/messages";
 import { scoreFeedPost } from "../shared/scoring";
@@ -117,7 +117,7 @@ async function enqueueSuggestion(
 
   try {
     const { triage, post } = entry;
-    const result = await createSuggestion({
+    const created = await createSuggestion({
       feedPost: {
         id: post.id,
         url: post.url,
@@ -138,16 +138,44 @@ async function enqueueSuggestion(
       notes: notes?.trim() ? notes.trim() : undefined,
     });
 
+    const job = await waitForSuggestion(created.jobId);
+
+    if (job.status === "failed") {
+      return {
+        type: MessageType.GENERATE_SUGGESTION_RESULT,
+        ok: false,
+        feedPostId,
+        jobId: job.jobId,
+        status: job.status,
+        error: job.error || "Suggestion job failed",
+      };
+    }
+
+    const suggestion = job.run?.suggestion?.trim();
+    if (!suggestion) {
+      return {
+        type: MessageType.GENERATE_SUGGESTION_RESULT,
+        ok: false,
+        feedPostId,
+        jobId: job.jobId,
+        status: job.status,
+        error: "Job succeeded but no suggestion was returned",
+      };
+    }
+
     return {
       type: MessageType.GENERATE_SUGGESTION_RESULT,
       ok: true,
       feedPostId,
-      jobId: result.jobId,
-      status: result.status,
+      jobId: job.jobId,
+      status: job.status,
+      suggestion,
+      rationale: job.run?.rationale ?? undefined,
+      category: job.run?.category ?? undefined,
     };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    console.warn("%c🔗 Linkrowth", "font-weight:bold", "— suggestion enqueue failed ❌", msg);
+    console.warn("%c🔗 Linkrowth", "font-weight:bold", "— suggestion failed ❌", msg);
     return {
       type: MessageType.GENERATE_SUGGESTION_RESULT,
       ok: false,
