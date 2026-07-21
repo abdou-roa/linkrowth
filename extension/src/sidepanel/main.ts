@@ -15,6 +15,7 @@ const emptyEl = document.getElementById("empty") as HTMLParagraphElement;
 const summaryEl = document.getElementById("summary") as HTMLParagraphElement;
 const hideSkipsEl = document.getElementById("hide-skips") as HTMLInputElement;
 const selectModeEl = document.getElementById("select-mode") as HTMLButtonElement;
+const selectAllEl = document.getElementById("select-all") as HTMLButtonElement;
 const clearSelectedEl = document.getElementById(
   "clear-selected",
 ) as HTMLButtonElement;
@@ -84,12 +85,39 @@ function renderSummary(): void {
   summaryEl.textContent = parts.join(" · ");
 }
 
+function allVisibleSelected(): boolean {
+  const visible = visibleEntries();
+  return (
+    visible.length > 0 && visible.every((e) => selectedIds.has(e.post.id))
+  );
+}
+
 function updateToolbar(): void {
+  const visible = visibleEntries();
+  const allSelected = allVisibleSelected();
+
   selectModeEl.textContent = selectMode ? "Done" : "Select";
   selectModeEl.setAttribute("aria-pressed", String(selectMode));
+
+  selectAllEl.hidden = !selectMode;
+  selectAllEl.disabled = visible.length === 0;
+  selectAllEl.textContent = allSelected ? "Deselect all" : "Select all";
+
   clearSelectedEl.disabled = !selectMode || selectedIds.size === 0;
   clearSelectedEl.textContent =
     selectedIds.size > 0 ? `Clear (${selectedIds.size})` : "Clear";
+}
+
+function toggleSelectAll(): void {
+  const visible = visibleEntries();
+  if (visible.length === 0) return;
+
+  if (allVisibleSelected()) {
+    for (const entry of visible) selectedIds.delete(entry.post.id);
+  } else {
+    for (const entry of visible) selectedIds.add(entry.post.id);
+  }
+  render();
 }
 
 function buildRow(entry: TriageEntry): HTMLLIElement {
@@ -316,6 +344,7 @@ chrome.runtime.onMessage.addListener((message) => {
 
 hideSkipsEl.addEventListener("change", render);
 selectModeEl.addEventListener("click", () => setSelectMode(!selectMode));
+selectAllEl.addEventListener("click", toggleSelectAll);
 clearSelectedEl.addEventListener("click", () => void clearSelected());
 
 void loadEntries();
