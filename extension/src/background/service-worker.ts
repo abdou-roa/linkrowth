@@ -16,10 +16,10 @@ chrome.runtime.onInstalled.addListener(() => {
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!isExtensionMessage(message)) return false;
 
-  void handleMessage(message)
+  void handleMessage(message, sender)
     .then((result) => sendResponse(result ?? { ok: true }))
     .catch((error: unknown) => {
       const msg = error instanceof Error ? error.message : String(error);
@@ -31,10 +31,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 async function handleMessage(
   message: ExtensionMessage,
+  sender: chrome.runtime.MessageSender,
 ): Promise<Record<string, unknown> | void> {
   switch (message.type) {
     case MessageType.POST_VISIBLE:
-      enqueueTriage(message.post);
+      enqueueTriage(message.post, false, sender.tab?.id);
       return;
 
     case MessageType.LIST_TRIAGE: {
@@ -48,7 +49,7 @@ async function handleMessage(
         return { ok: false, error: "unknown post" };
       }
       inFlight.delete(message.feedPostId);
-      enqueueTriage(existing.post, true);
+      enqueueTriage(existing.post, true, sender.tab?.id);
       return;
     }
 
@@ -185,9 +186,21 @@ async function enqueueSuggestion(
   }
 }
 
-function enqueueTriage(post: FeedPost, force = false): void {
+function enqueueTriage(
+  post: FeedPost,
+  force = false,
+  tabId?: number,
+): void {
   queue.enqueue(async () => {
-    if (!force && (await triageStore.has(post.id))) return;
+    if (!force) {
+      const existing = await triageStore.get(post.id);
+      if (existing) {
+        // Re-announce so the feed badge can attach after LinkedIn recycles DOM,
+        // or when the content script missed the original broadcast.
+        broadcast({ type: MessageType.TRIAGE_UPDATED, entry: existing }, tabId);
+        return;
+      }
+    }
     if (inFlight.has(post.id)) return;
     inFlight.add(post.id);
 
@@ -201,13 +214,13 @@ function enqueueTriage(post: FeedPost, force = false): void {
       },
     };
     await triageStore.upsert(roasting);
-    broadcast({ type: MessageType.TRIAGE_UPDATED, entry: roasting });
+    broadcast({ type: MessageType.TRIAGE_UPDATED, entry: roasting }, tabId);
 
     try {
       const triage = scoreFeedPost(post);
       const done: TriageEntry = { post, triage };
       await triageStore.upsert(done);
-      broadcast({ type: MessageType.TRIAGE_UPDATED, entry: done });
+      broadcast({ type: MessageType.TRIAGE_UPDATED, entry: done }, tabId);
     } catch (error) {
       const failed: TriageEntry = {
         post,
@@ -221,15 +234,41 @@ function enqueueTriage(post: FeedPost, force = false): void {
         },
       };
       await triageStore.upsert(failed);
-      broadcast({ type: MessageType.TRIAGE_UPDATED, entry: failed });
+      broadcast({ type: MessageType.TRIAGE_UPDATED, entry: failed }, tabId);
     } finally {
       inFlight.delete(post.id);
     }
   });
 }
 
-function broadcast(message: ExtensionMessage): void {
+/**
+ * Notify extension pages (side panel) and LinkedIn content scripts.
+ * `chrome.runtime.sendMessage` does not reach content scripts — those need
+ * `chrome.tabs.sendMessage`.
+ */
+function broadcast(message: ExtensionMessage, tabId?: number): void {
   chrome.runtime.sendMessage(message).catch(() => {
     // No side-panel listener yet — fine.
   });
+
+  if (typeof tabId === "number") {
+    chrome.tabs.sendMessage(tabId, message).catch(() => {
+      // Tab closed or content script not injected yet.
+    });
+    return;
+  }
+
+  void chrome.tabs
+    .query({ url: ["https://www.linkedin.com/*"] })
+    .then((tabs) => {
+      for (const tab of tabs) {
+        if (tab.id == null) continue;
+        chrome.tabs.sendMessage(tab.id, message).catch(() => {
+          // Tab without our content script — ignore.
+        });
+      }
+    })
+    .catch(() => {
+      // tabs.query can fail without host access in rare cases.
+    });
 }
