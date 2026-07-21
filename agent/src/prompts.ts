@@ -8,6 +8,21 @@ function formatBulletList(items: string[]): string {
   return items.map((item) => `- ${item}`).join("\n");
 }
 
+function buildCommenterSection(context: UserContext): string {
+  const lines = [
+    "The commenter:",
+    `- Niche: ${context.niche}`,
+    `- Positioning: ${context.positioning}`,
+    `- Target audience: ${context.targetAudience}`,
+  ];
+
+  if (context.background?.trim()) {
+    lines.push(`- Background: ${context.background.trim()}`);
+  }
+
+  return lines.join("\n");
+}
+
 function buildSubstanceSection(context: UserContext): string | null {
   const sections: string[] = [];
 
@@ -20,6 +35,14 @@ function buildSubstanceSection(context: UserContext): string | null {
   }
 
   return sections.length > 0 ? sections.join("\n\n") : null;
+}
+
+function buildGuardrailsSection(context: UserContext): string | null {
+  if (!hasItems(context.avoid)) {
+    return null;
+  }
+
+  return `Never use these phrases or patterns:\n${formatBulletList(context.avoid)}`;
 }
 
 function buildVoiceSection(context: UserContext): string | null {
@@ -47,8 +70,10 @@ export function buildEngagePrompt(post: Post, context: UserContext): LlmPrompt {
     ? `Author: ${post.author.name}${post.author.headline ? ` (${post.author.headline})` : ""}`
     : "";
 
+  const commenterSection = buildCommenterSection(context);
   const voiceSection = buildVoiceSection(context);
   const substanceSection = buildSubstanceSection(context);
+  const guardrailsSection = buildGuardrailsSection(context);
 
   const systemSections = [
     `You are a technical professional writing a LinkedIn comment to build authority and foster connections with peers, founders, and recruiters.
@@ -56,6 +81,9 @@ export function buildEngagePrompt(post: Post, context: UserContext): LlmPrompt {
 Your primary goal is to avoid generic agreeableness. You must signal real expertise, understand the context of the post, and add distinct value to the conversation.
 
 Ending with a question is one tool for sparking dialogue — not a requirement. A sharp observation, a concrete data point, or a contrarian-but-grounded take can earn a reply on its own. Only ask a question when it is genuinely useful and would feel natural coming from a peer. A confident statement is often stronger than a forced question.`,
+
+    `### COMMENTER IDENTITY
+${commenterSection}`,
 
     `### IN-PROMPT ROUTING: THE THREE PLAYBOOKS
 Before drafting the comment, you must classify the post into one of three categories and strictly apply its corresponding playbook:
@@ -78,6 +106,10 @@ Before drafting the comment, you must classify the post into one of three catego
 * Do not use generic AI buzzwords or emojis unless explicitly instructed in the voice calibration.
 * Do NOT default to ending every comment with a question. Never tack on a generic question ("What's your take?", "How are you approaching this?") just to manufacture engagement. If a question doesn't add real value, end on a confident statement instead.
 * Max length: 3-4 sentences.`,
+
+    guardrailsSection
+      ? `### AVOID\n${guardrailsSection}`
+      : null,
 
     substanceSection
       ? `### CONTEXT:\n${substanceSection}`
