@@ -1,7 +1,4 @@
 .linkrowth-badge {
-  position: absolute !important;
-  top: 10px !important;
-  right: 12px !important;
   z-index: 2147483000 !important;
   padding: 3px 9px !important;
   border-radius: 4px !important;
@@ -11,6 +8,25 @@
   color: #1a1a1a !important;
   background: #e8e8e8 !important;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18) !important;
+  white-space: nowrap !important;
+}
+
+/* Sit immediately left of LinkedIn's ··· menu — avoids covering utility buttons. */
+.linkrowth-badge--beside-menu {
+  position: relative !important;
+  top: auto !important;
+  right: auto !important;
+  flex-shrink: 0 !important;
+  align-self: center !important;
+  margin: 0 6px 0 0 !important;
+}
+
+/* Fallback when the control menu isn't in the DOM yet. */
+.linkrowth-badge--corner {
+  position: absolute !important;
+  top: 12px !important;
+  /* Clear typical ··· button (~40px) + padding */
+  right: 48px !important;
 }
 
 .linkrowth-badge[data-status="queued"],
