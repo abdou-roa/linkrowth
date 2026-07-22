@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { engage, ENGAGE_AGENT_ID } from "../core/engage";
+import { getAgent } from "../agents/registry";
 import { loadUserContext } from "../context/loadUserContext";
 import type { Post, UserContext } from "../core/types";
 import {
@@ -8,11 +8,13 @@ import {
   JobNotClaimableError,
 } from "./jobStatus";
 import { createPostgresRunRepository } from "./postgresRepository";
-import type { ReasoningStep, RunRecord, RunRepository } from "./types";
+import type { RunRecord, RunRepository } from "./types";
 
 export interface RunEngageOptions {
   context?: UserContext;
   repository?: RunRepository;
+  /** Which agent pipeline to run. Defaults to LINKROWTH_AGENT then one-shot. */
+  agentId?: string;
   /** Existing suggestion_jobs row from the API. Skips claim when the caller already claimed it. */
   jobId?: string;
   /** When true with jobId, skip the queued → running claim (caller already claimed). */
@@ -20,9 +22,9 @@ export interface RunEngageOptions {
 }
 
 /**
- * Persistence wrapper around the engage core: resolve context, claim the job,
- * run engage(), persist the run, and reconcile job status on failure. The core
- * engage() knows nothing about any of this.
+ * Persistence wrapper around the engage agents: resolve context, claim the job,
+ * run the selected agent, persist the run, and reconcile job status on failure.
+ * The agents and the pure core know nothing about any of this.
  */
 export async function runEngage(
   post: Post,
@@ -30,6 +32,7 @@ export async function runEngage(
 ): Promise<RunRecord> {
   const context = options.context ?? loadUserContext();
   const repository = options.repository ?? createPostgresRunRepository();
+  const agent = getAgent(options.agentId);
   const { jobId } = options;
 
   if (jobId && !options.skipClaim) {
@@ -42,30 +45,18 @@ export async function runEngage(
   const postId = post.id ?? randomUUID();
 
   try {
-    const startedAt = new Date().toISOString();
-    const result = await engage(post, context);
-    const completedAt = new Date().toISOString();
-
-    const steps: ReasoningStep[] = [
-      {
-        name: "engage_oneshot",
-        status: "completed",
-        summary: "Single-prompt engage completed",
-        output: result,
-        startedAt,
-        completedAt,
-      },
-    ];
+    const { result, steps, agentId } = await agent.run({ post, context });
+    const createdAt = new Date().toISOString();
 
     const record: RunRecord = {
       id: randomUUID(),
       jobId,
       postId,
-      agentId: ENGAGE_AGENT_ID,
+      agentId,
       post: { ...post, id: postId },
       result,
       steps,
-      createdAt: completedAt,
+      createdAt,
     };
 
     return await repository.save(record);
