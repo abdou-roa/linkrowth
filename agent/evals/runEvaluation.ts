@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ToneJudgeInput, EvalDataset } from "./types";
-import { engage } from "../src/engage";
+import { engage } from "../src/core/engage";
 import { getAgentRoot } from "../src/paths";
+import { loadUserContext } from "../src/context/loadUserContext";
 import { runToneJudge } from "./judges/toneJudge";
 import { runAiToneJudge } from "./judges/aiToneJudge";
 
@@ -17,20 +18,9 @@ function loadEvalDataset(): EvalDataset[] | undefined {
   }
 }
 
-function loadUserconfig(): any {
-  try {
-    const filePath = join(getAgentRoot(), "config", "user.json");
-    const rawConfig = readFileSync(filePath, "utf8");
-    const data: any = JSON.parse(rawConfig);
-    return data;
-  } catch (error) {
-    console.error("Error loading user configuration:", error);
-  }
-}
-
 async function runEvaluation(): Promise<void> {
   const dataset = loadEvalDataset();
-  const userConfig = loadUserconfig();
+  const userConfig = loadUserContext();
 
   if (!dataset || !userConfig) {
     console.error("Dataset or user configuration is missing. Exiting evaluation.");
@@ -42,17 +32,17 @@ async function runEvaluation(): Promise<void> {
 
     const input: ToneJudgeInput = {
       generatedComment: EngageResult.suggestion,
-      voiceNotes: userConfig.voiceNotes,
-      voiceSamples: userConfig.voiceSamples || [],
+      voiceNotes: userConfig.voiceNotes ?? "",
+      voiceSamples: userConfig.voiceSamples ?? [],
     };
 
     try {
-      const categoryJudegeResult = EngageResult.category === test_case.category;
+      const categoryJudgeResult = EngageResult.category === test_case.category;
       const toneJudgeResult = await runToneJudge(input);
       const aiToneJudgeResult = await runAiToneJudge(input);
 
       console.log("\n____________________Evaluation Result____________________");
-      console.log(categoryJudegeResult ? "Category Judge: PASS" : "Category Judge: FAIL");
+      console.log(categoryJudgeResult ? "Category Judge: PASS" : "Category Judge: FAIL");
       console.log("\n");
       console.log(toneJudgeResult.pass ? "Tone Judge: PASS" : "Tone Judge: FAIL");
       console.log("Tone Judge Reasoning:", toneJudgeResult.reasoning);

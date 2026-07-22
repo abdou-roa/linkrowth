@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { getProviderConfig } from "../config/env";
+import { getProviderConfig } from "../../config/llm";
 import type { LlmRequest } from "../types";
 
 let client: OpenAI | null = null;
@@ -19,16 +19,12 @@ export async function call(request: LlmRequest): Promise<string> {
   const { defaultModel } = getProviderConfig("openai");
   const response = await getClient().chat.completions.create({
     model: request.model ?? defaultModel,
-    max_completion_tokens: request.max_completion_tokens ?? 1024,
+    max_completion_tokens: request.maxTokens ?? 1024,
     messages: [
       { role: "system", content: request.system },
       { role: "user", content: request.user },
     ],
   });
-
-  console.log("_________________________response_________________________");
-  console.log(response);
-  console.log("_________________________response_________________________");
 
   const content = response.choices[0]?.message?.content;
   if (!content) {

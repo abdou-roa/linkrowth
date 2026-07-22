@@ -9,20 +9,20 @@
   },
   "exports": {
     "./engage": {
-      "types": "./dist/engage.d.ts",
-      "default": "./dist/engage.js"
+      "types": "./dist/core/engage.d.ts",
+      "default": "./dist/core/engage.js"
     },
     "./runs": {
-      "types": "./dist/runs/service.d.ts",
-      "default": "./dist/runs/service.js"
+      "types": "./dist/persistence/runEngage.d.ts",
+      "default": "./dist/persistence/runEngage.js"
     },
     "./llm": {
-      "types": "./dist/llm.d.ts",
-      "default": "./dist/llm.js"
+      "types": "./dist/llm/index.d.ts",
+      "default": "./dist/llm/index.js"
     },
     "./types": {
-      "types": "./dist/types.d.ts",
-      "default": "./dist/types.js"
+      "types": "./dist/core/types.d.ts",
+      "default": "./dist/core/types.js"
     }
   },
   "scripts": {

@@ -1,4 +1,4 @@
-import { getActiveProviderConfig } from "./config/env";
+import { getActiveProviderConfig } from "../config/llm";
 import { call as geminiCall } from "./clients/gemini";
 import { call as gptCall } from "./clients/gpt";
 import type { LlmProvider, LlmRequest } from "./types";

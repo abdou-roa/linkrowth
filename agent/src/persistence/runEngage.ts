@@ -1,46 +1,35 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { getAgent } from "../agents/registry";
-import { getAgentRoot } from "../paths";
-import type { Post, UserContext } from "../types";
+import { engage, ENGAGE_AGENT_ID } from "../core/engage";
+import { loadUserContext } from "../context/loadUserContext";
+import type { Post, UserContext } from "../core/types";
 import {
   claimSuggestionJob,
   failSuggestionJob,
   JobNotClaimableError,
 } from "./jobStatus";
 import { createPostgresRunRepository } from "./postgresRepository";
-import type { RunRecord, RunRepository } from "./types";
-
-function loadUserContext(): UserContext {
-  const configPath = join(getAgentRoot(), "config", "user.json");
-  if (!existsSync(configPath)) {
-    throw new Error(
-      "Missing agent/config/user.json. Copy agent/config/user.example.json and fill in your identity, voice, and substance fields."
-    );
-  }
-
-  const raw = readFileSync(configPath, "utf-8");
-  return JSON.parse(raw) as UserContext;
-}
+import type { ReasoningStep, RunRecord, RunRepository } from "./types";
 
 export interface RunEngageOptions {
   context?: UserContext;
   repository?: RunRepository;
-  agentId?: string;
   /** Existing suggestion_jobs row from the API. Skips claim when the caller already claimed it. */
   jobId?: string;
   /** When true with jobId, skip the queued → running claim (caller already claimed). */
   skipClaim?: boolean;
 }
 
+/**
+ * Persistence wrapper around the engage core: resolve context, claim the job,
+ * run engage(), persist the run, and reconcile job status on failure. The core
+ * engage() knows nothing about any of this.
+ */
 export async function runEngage(
   post: Post,
   options: RunEngageOptions = {}
 ): Promise<RunRecord> {
   const context = options.context ?? loadUserContext();
   const repository = options.repository ?? createPostgresRunRepository();
-  const agent = getAgent(options.agentId);
   const { jobId } = options;
 
   if (jobId && !options.skipClaim) {
@@ -53,18 +42,30 @@ export async function runEngage(
   const postId = post.id ?? randomUUID();
 
   try {
-    const agentResult = await agent.run({ post, context });
-    const createdAt = new Date().toISOString();
+    const startedAt = new Date().toISOString();
+    const result = await engage(post, context);
+    const completedAt = new Date().toISOString();
+
+    const steps: ReasoningStep[] = [
+      {
+        name: "engage_oneshot",
+        status: "completed",
+        summary: "Single-prompt engage completed",
+        output: result,
+        startedAt,
+        completedAt,
+      },
+    ];
 
     const record: RunRecord = {
       id: randomUUID(),
       jobId,
       postId,
-      agentId: agentResult.agentId,
+      agentId: ENGAGE_AGENT_ID,
       post: { ...post, id: postId },
-      result: agentResult.result,
-      steps: agentResult.steps,
-      createdAt,
+      result,
+      steps,
+      createdAt: completedAt,
     };
 
     return await repository.save(record);

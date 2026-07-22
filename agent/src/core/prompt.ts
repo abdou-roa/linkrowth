@@ -1,4 +1,5 @@
-import type { LlmPrompt, Post, UserContext } from "./types";
+import type { LlmPrompt } from "../llm/types";
+import type { Post, UserContext } from "./types";
 
 function hasItems(items?: string[]): items is string[] {
   return Boolean(items?.length);

@@ -1,4 +1,4 @@
-import type { EngageResult } from "../types";
+import type { EngageResult } from "./types";
 
 export function parseEngageResponse(text: string): EngageResult {
   const cleanedText = text

@@ -1,4 +1,4 @@
-import { getPool } from "../db/client";
+import { getPool } from "../config/db";
 
 export class JobNotClaimableError extends Error {
   constructor(jobId: string) {

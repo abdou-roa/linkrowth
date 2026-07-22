@@ -1,8 +1,14 @@
 #!/usr/bin/env node
-import { validateEnv } from "./config/env";
+import { getActiveProviderConfig } from "./config/llm";
+import { getDatabaseUrl } from "./config/db";
 import { createInterface } from "node:readline";
 import { stdin } from "node:process";
-import { engage } from "./engage";
+import { runEngage } from "./persistence/runEngage";
+
+function validateEnv(): void {
+  getActiveProviderConfig();
+  getDatabaseUrl();
+}
 
 async function readPostFromStdin(): Promise<string> {
   if (!stdin.isTTY) {
@@ -33,9 +39,9 @@ async function readPostFromStdin(): Promise<string> {
   return text;
 }
 
-async function runEngage(): Promise<void> {
+async function runEngageCommand(): Promise<void> {
   const text = await readPostFromStdin();
-  const result = await engage({ text });
+  const { result } = await runEngage({ text });
 
   console.log("\nCategory:");
   console.log(result.category);
@@ -55,7 +61,7 @@ async function main(): Promise<void> {
 
   try {
     validateEnv();
-    await runEngage();
+    await runEngageCommand();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error: ${message}`);

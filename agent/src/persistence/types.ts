@@ -1,5 +1,14 @@
-import type { ReasoningStep } from "../agents/types";
-import type { EngageResult, Post } from "../types";
+import type { EngageResult, Post } from "../core/types";
+
+export interface ReasoningStep {
+  name: string;
+  status: "completed" | "failed";
+  summary?: string;
+  output?: unknown;
+  error?: string;
+  startedAt: string;
+  completedAt: string;
+}
 
 /** Persisted engage run aligned with helpers/schema.sql `suggestion_runs`. */
 export interface RunRecord {
