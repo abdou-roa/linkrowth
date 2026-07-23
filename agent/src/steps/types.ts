@@ -25,26 +25,30 @@ export interface ReasoningStep {
 /** Injected LLM entry point, so steps stay testable and provider-agnostic. */
 export type LlmCall = (request: LlmRequest) => Promise<string>;
 
-export interface DraftArtifact {
-  suggestion: string;
+/** Analyzer output: how to approach the post. */
+export interface AnalysisArtifact {
+  category?: string;
+  coreSubject?: string;
   valueHook?: string;
   appliedPlaybook?: string;
 }
 
-export interface CritiqueArtifact {
-  pass: boolean;
-  issues: string[];
-  voiceCheck?: string;
+/** Drafter / refiner output: the candidate comment. */
+export interface DraftArtifact {
+  suggestion: string;
+  rationale?: string;
 }
 
-/** The blackboard threaded through a multi-step run; each step fills its slot. */
+/**
+ * The blackboard threaded through a multi-step run; each step fills its slot.
+ * Pipeline: analyzer → drafter → refiner. Context is supplied by persistence
+ * (loadUserContext); the RAG seam stays in context/, not as a step.
+ */
 export interface EngageState {
   post: Post;
   context?: UserContext;
-  category?: string;
-  coreSubject?: string;
+  analysis?: AnalysisArtifact;
   draft?: DraftArtifact;
-  critique?: CritiqueArtifact;
   attempts: number;
   result?: EngageResult;
 }

@@ -1,13 +1,11 @@
-import { classifyStep } from "../steps/classify";
-import { assembleContextStep } from "../steps/assembleContext";
-import { draftStep } from "../steps/draft";
-import { critiqueStep } from "../steps/critique";
-import { refineStep } from "../steps/refine";
+import { analyzerStep } from "../steps/analyzer";
+import { drafterStep } from "../steps/drafter";
+import { refinerStep } from "../steps/refiner";
 import type { Agent, AgentRunInput, AgentRunResult } from "./types";
 
 export const MULTI_STEP_ENGAGE_AGENT_ID = "multi_step_engage";
 
-/** Max critique → refine cycles before accepting the current draft. */
+/** Max refiner cycles before accepting the current draft. */
 const MAX_REFINE_ATTEMPTS = 2;
 
 /**
@@ -15,28 +13,23 @@ const MAX_REFINE_ATTEMPTS = 2;
  *
  * Composes the reasoning steps into the engage pipeline:
  *
- *   classify → assembleContext → draft → critique ↺ refine → finalize
+ *   analyze → draft → refine ↺ → finalize
  *
  * Intended controller shape (imperative, bounded loop):
- *   1. run classify, assembleContext, draft (linear), merging each patch
- *   2. run critique
- *   3. while !critique.pass && attempts < MAX_REFINE_ATTEMPTS: run refine, re-critique
+ *   1. run analyzer, then drafter (linear), merging each patch
+ *   2. run refiner (self-review + rewrite)
+ *   3. while refiner requests another pass && attempts < MAX_REFINE_ATTEMPTS: run refiner again
  *   4. finalize EngageState.draft → EngageResult
  *   5. return { agentId, result, steps } with one ReasoningStep per step run
  *
- * Step bodies (prompt + parse) and this controller are the next unit of work.
+ * Context is supplied by persistence (loadUserContext); the RAG seam stays in
+ * context/, not as a step. Step bodies and this controller are the next work.
  */
 class MultiStepEngageAgent implements Agent {
   readonly id = MULTI_STEP_ENGAGE_AGENT_ID;
 
   // Declared here so the pipeline order is visible; wiring lands with the impl.
-  private readonly steps = [
-    classifyStep,
-    assembleContextStep,
-    draftStep,
-    critiqueStep,
-    refineStep,
-  ];
+  private readonly steps = [analyzerStep, drafterStep, refinerStep];
 
   async run(_input: AgentRunInput): Promise<AgentRunResult> {
     void this.steps;
