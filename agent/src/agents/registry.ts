@@ -10,7 +10,6 @@ import type { Agent } from "./types";
 
 const agents = new Map<string, Agent>([
   [ONE_SHOT_ENGAGE_AGENT_ID, oneShotEngageAgent],
-  // Scaffold: selectable but throws until the pipeline is implemented.
   [MULTI_STEP_ENGAGE_AGENT_ID, multiStepEngageAgent],
 ]);
 

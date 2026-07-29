@@ -53,18 +53,25 @@ export interface DraftArtifact {
   rationale?: string;
 }
 
+export type EngageRunStatus = "in_progress" | "ready_for_review";
+
 /**
  * The blackboard threaded through a multi-step run; each step fills its slot.
- * Pipeline: analyzer → drafter → refiner. Context is supplied by persistence
- * (loadUserContext); the RAG seam stays in context/, not as a step.
+ * Pipeline: analyzer → drafter → refiner ↺ drafter. Context is supplied by
+ * persistence (loadUserContext); the RAG seam stays in context/, not as a step.
  */
 export interface EngageState {
   post: Post;
   context?: UserContext;
   analysis?: AnalysisArtifact;
   draft?: DraftArtifact;
+  /** Refiner notes accumulated across reject → redraft cycles. */
+  feedbackHistory: string[];
   attempts: number;
+  status: EngageRunStatus;
+  isApproved?: boolean;
   result?: EngageResult;
+  steps: ReasoningStep[];
 }
 
 export interface StepDeps {

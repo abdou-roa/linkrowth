@@ -1,5 +1,5 @@
 import type { EngageResult, Post, UserContext } from "../core/types";
-import type { ReasoningStep } from "../steps/types";
+import type { LlmCall, ReasoningStep } from "../steps/types";
 
 export interface AgentRunInput {
   post: Post;
@@ -10,6 +10,11 @@ export interface AgentRunResult {
   agentId: string;
   result: EngageResult;
   steps: ReasoningStep[];
+}
+
+/** Injected runtime deps for agents that compose LLM-backed steps. */
+export interface AgentDependencies {
+  call: LlmCall;
 }
 
 /**
