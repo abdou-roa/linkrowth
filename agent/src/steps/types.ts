@@ -25,12 +25,26 @@ export interface ReasoningStep {
 /** Injected LLM entry point, so steps stay testable and provider-agnostic. */
 export type LlmCall = (request: LlmRequest) => Promise<string>;
 
-/** Analyzer output: how to approach the post. */
+export type PostCategory = "technical" | "achievement" | "informal";
+
+export interface AuthorProfile {
+  estimatedTechnicalDepth: "non-technical" | "intermediate" | "expert";
+  postIntent: string;
+}
+
+export interface PivotStrategy {
+  acknowledgedPoint: string;
+  insightToInject: string;
+}
+
+/** Analyzer output: structural analysis of the post before any drafting. */
 export interface AnalysisArtifact {
-  category?: string;
-  coreSubject?: string;
-  valueHook?: string;
-  appliedPlaybook?: string;
+  category: PostCategory;
+  coreThesis: string;
+  authorProfile: AuthorProfile;
+  /** Empty array for non-technical posts. */
+  unspokenTradeoffs: string[];
+  pivotStrategy: PivotStrategy;
 }
 
 /** Drafter / refiner output: the candidate comment. */
