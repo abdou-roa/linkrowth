@@ -1,3 +1,4 @@
+import type { UserContext } from "../core/types";
 import type { AnalysisArtifact, AuthorSeniority, PostTone } from "./types";
 import type { Step, StepResult } from "./types";
 import type { EngageState, StepDeps } from "./types";
@@ -6,8 +7,35 @@ import type { EngageState, StepDeps } from "./types";
 // Prompt
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT = `You are the "Post Analyzer" node in an AI comment-drafting workflow.
+/**
+ * The analyzer is the bridge between the post's content and the user's persona:
+ * every trade-off and insight it surfaces must be filterable through the
+ * user's own domain authority, not generic industry commentary.
+ */
+function buildUserDomainSection(context?: UserContext): string {
+  if (!context) {
+    return `USER DOMAIN CONTEXT:
+(not available — leave "unspokenTradeoffs" empty and keep "pivotStrategy.insightToInject" general rather than inventing a domain fit.)`;
+  }
+
+  const lines = [`- Niche: ${context.niche}`];
+
+  if (context.background?.trim()) {
+    lines.push(`- Background: ${context.background.trim()}`);
+  }
+
+  if (context.opinions?.length) {
+    lines.push(`- Opinions this person holds: ${context.opinions.join("; ")}`);
+  }
+
+  return `USER DOMAIN CONTEXT (the person who will post the eventual comment — every trade-off and insight below must be filtered through this):\n${lines.join("\n")}`;
+}
+
+function buildSystemPrompt(context?: UserContext): string {
+  return `You are the "Post Analyzer" node in an AI comment-drafting workflow.
 Your only job is structural analysis — you do NOT write a comment draft.
+
+${buildUserDomainSection(context)}
 
 Analyze the post and return a single JSON object. Follow these rules strictly:
 
@@ -30,11 +58,11 @@ DIRECT QUESTION RULES:
 - Set it to null if the post makes no direct ask of its readers.
 
 UNSPOKEN TRADE-OFFS RULES:
-- Only populate this array when category is "technical".
+- Only populate this array when the category is "technical".
 - For achievement or informal posts, set it to an empty array [].
-- Each entry must be directly implied by a specific technology, pattern, decision, or claim the author explicitly named in the post.
-- Do NOT invent generic trade-offs unrelated to what the author wrote.
-- Limit to 1–2 entries. Be specific and grounded, not broad.
+- CRITICAL: each entry must bridge a concept explicitly named in the post to the USER DOMAIN CONTEXT above. Do not invent trade-offs outside the user's established niche.
+- If the post's technical subject has no genuine bridge to the user's niche, leave this array empty rather than forcing an unrelated trade-off.
+- Limit to 1–2 entries. Be specific and grounded in production reality.
 
 RISK FLAG RULES:
 - Flag sensitive topics that require careful handling in "riskFlags": e.g. "layoffs", "personal-loss", "competitor-criticism", "political", "controversial-opinion".
@@ -42,8 +70,9 @@ RISK FLAG RULES:
 
 PIVOT STRATEGY RULES:
 - "acknowledgedPoint": the single strongest claim or detail from the post worth referencing — be specific, not generic.
-- "insightToInject": a technical nuance, operational reality, or honest counter-angle that adds value to the conversation. For achievement posts this can be a non-obvious dimension of the milestone. For informal posts it can be a grounding observation tied to professional reality.
-- If "postQuestion" is set, "insightToInject" should directly answer or meaningfully reframe that question rather than ignoring it.
+- "insightToInject": the exact angle the drafter should take. This MUST align with the user's background and opinions from the USER DOMAIN CONTEXT above — draw on their specific experience and stated positions, not generic industry knowledge.
+- If the post is entirely outside the user's niche, pivot the insight back to their domain via a relevant analogy or operational reality, rather than commenting on unfamiliar territory.
+- If "postQuestion" is set, "insightToInject" should directly answer or meaningfully reframe that question through the lens of the user's expertise.
 
 OUTPUT FORMAT:
 Return only the JSON object. No markdown fences, no explanation.
@@ -58,16 +87,17 @@ Return only the JSON object. No markdown fences, no explanation.
   },
   "postQuestion": "<exact or paraphrased question, or null>",
   "unspokenTradeoffs": [
-    "<direct implication of something the author explicitly named>"
+    "<concept from the post bridged to the user's specific niche>"
   ],
   "riskFlags": [
     "<sensitive topic to handle carefully>"
   ],
   "pivotStrategy": {
     "acknowledgedPoint": "<specific claim or detail from the post>",
-    "insightToInject": "<the angle that adds genuine value>"
+    "insightToInject": "<the angle that adds genuine value, grounded in the user's own domain authority>"
   }
 }`;
+}
 
 // ---------------------------------------------------------------------------
 // JSON extraction
@@ -153,7 +183,7 @@ export const analyzerStep: Step = {
 
   async run(state: EngageState, deps: StepDeps): Promise<StepResult> {
     const raw = await deps.call({
-      system: SYSTEM_PROMPT,
+      system: buildSystemPrompt(state.context),
       user: buildUserMessage(state),
       maxTokens: 768,
     });
