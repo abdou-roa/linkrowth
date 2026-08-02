@@ -41,14 +41,25 @@ async function readPostFromStdin(): Promise<string> {
 
 async function runEngageCommand(): Promise<void> {
   const text = await readPostFromStdin();
-  const { result } = await runEngage({ text });
+  const { result, steps, agentId } = await runEngage({ text });
 
+  console.log(`\nAgent: ${agentId}`);
   console.log("\nCategory:");
   console.log(result.category);
   console.log("\nSuggestion:");
   console.log(result.suggestion);
   console.log("\nWhy:");
   console.log(result.rationale);
+
+  if (steps.length > 0) {
+    console.log("\nSteps:");
+    for (const step of steps) {
+      console.log(`- ${step.name} [${step.status}] ${step.summary ?? ""}`);
+      if (step.output !== undefined) {
+        console.log(JSON.stringify(step.output, null, 2));
+      }
+    }
+  }
 }
 
 async function main(): Promise<void> {
