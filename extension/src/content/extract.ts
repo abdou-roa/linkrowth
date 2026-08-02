@@ -1001,8 +1001,11 @@ function matchAgeSnippet(raw: string): string | undefined {
 }
 
 /**
- * Reaction count: prefer data-view-name / aria-label ("42 reactions").
- * Comments already had an aria-label fallback — reactions need the same.
+ * Reaction / comment counts from the social-proof row.
+ *
+ * Modern LinkedIn often renders the reaction total as a bare number next to
+ * emoji icons ("43"), with comments/reposts as "1 comment • 5 reposts" in a
+ * sibling control — no "reactions" label and often no `feed-reaction-count`.
  */
 function extractReactions(card: HTMLElement): string | undefined {
   const root = extractionRoot(card);
@@ -1010,6 +1013,7 @@ function extractReactions(card: HTMLElement): string | undefined {
   const nodes = root.querySelectorAll(
     [
       '[data-view-name="feed-reaction-count"]',
+      '[data-view-name*="reaction-count"]',
       ".social-details-social-counts__reactions-count",
       ".social-details-social-counts__reactions",
       'button[aria-label*="reaction" i]',
@@ -1020,37 +1024,37 @@ function extractReactions(card: HTMLElement): string | undefined {
 
   for (const el of nodes) {
     if (!(el instanceof HTMLElement)) continue;
+    if (isSocialActionControl(el)) continue;
+
     const fromAria = countFromReactionAria(el.getAttribute("aria-label"));
     if (fromAria) return fromAria;
 
-    const text = textOf(el);
-    if (!text || /comment|repost|share/i.test(text)) continue;
-    if (parseCount(text) !== undefined) return text;
+    const text = cleanInvisible(textOf(el));
+    if (!text) continue;
+
+    const explicit = text.match(/([\d,.]+[KkMm]?)\s*reactions?\b/i);
+    if (explicit?.[1]) return explicit[1];
+
+    // Dedicated reaction node with a bare count ("43").
+    if (isBareCount(text) && !/comment|repost|share/i.test(text)) {
+      return text;
+    }
   }
 
-  // Visible social-proof text sometimes has no stable attr.
-  const social = root.querySelector(
-    '.social-details-social-counts, [data-view-name*="social-count"], [data-view-name*="reaction"]',
-  );
-  if (social) {
-    const match = textOf(social).match(
-      /([\d,.]+[KkMm]?)\s*reactions?\b/i,
-    );
-    if (match) return match[1];
-  }
-
-  return undefined;
+  return countsFromSocialProof(root).reactions;
 }
 
 /** e.g. "42 reactions", "Jane and 41 others", "Open reactions list: 12 reactions" */
 function countFromReactionAria(aria: string | null): string | undefined {
   if (!aria) return undefined;
   const reactions = aria.match(/([\d,.]+[KkMm]?)\s*reactions?\b/i);
-  if (reactions) return reactions[1];
-  const others = aria.match(
-    /(?:and|&)\s*([\d,.]+[KkMm]?)\s*others?\b/i,
-  );
-  if (others) return others[1];
+  if (reactions?.[1]) return reactions[1];
+  // "Open reactions list" / "See who reacted" — no usable count.
+  if (/react/i.test(aria) && !/[\d,.]+/.test(aria)) return undefined;
+  const others = aria.match(/(?:and|&)\s*([\d,.]+[KkMm]?)\s*others?\b/i);
+  if (others?.[1]) return others[1];
+  // Rare: aria is just the number on the reactions control.
+  if (isBareCount(aria)) return aria.trim();
   return undefined;
 }
 
@@ -1060,31 +1064,267 @@ function extractComments(card: HTMLElement): string | undefined {
   const nodes = root.querySelectorAll(
     [
       '[data-view-name="feed-comment-count"]',
+      '[data-view-name*="comment-count"]',
       ".social-details-social-counts__comments",
       'button[aria-label*="comment" i]',
       '[aria-label*="comment" i]',
+      'a[aria-label*="comment" i]',
     ].join(", "),
   );
 
   for (const el of nodes) {
     if (!(el instanceof HTMLElement)) continue;
+    if (isSocialActionControl(el)) continue;
+
     const aria = el.getAttribute("aria-label") ?? "";
     const fromAria = aria.match(/([\d,.]+[KkMm]?)\s*comments?\b/i);
-    if (fromAria) return fromAria[1];
+    if (fromAria?.[1]) return fromAria[1];
 
-    const text = textOf(el);
-    if (!text || /reaction|repost|share/i.test(text)) continue;
-    if (parseCount(text) !== undefined) return text;
+    const text = cleanInvisible(textOf(el));
+    if (!text) continue;
+
+    // "1 comment • 5 reposts" — extract comments even when reposts share the node.
+    const fromText = text.match(/([\d,.]+[KkMm]?)\s*comments?\b/i);
+    if (fromText?.[1]) return fromText[1];
+
+    if (
+      el.matches(
+        '[data-view-name="feed-comment-count"], [data-view-name*="comment-count"], .social-details-social-counts__comments',
+      ) &&
+      isBareCount(text)
+    ) {
+      return text;
+    }
   }
 
-  return undefined;
+  return countsFromSocialProof(root).comments;
+}
+
+/**
+ * Parse the social-proof strip above Like/Comment/Repost.
+ * Typical layout: [👍❤️ 43]   [1 comment • 5 reposts]
+ */
+function countsFromSocialProof(root: HTMLElement): {
+  reactions?: string;
+  comments?: string;
+} {
+  const scope = socialProofScope(root);
+  const texts: string[] = [];
+  const bareCounts: string[] = [];
+
+  for (const el of scope.querySelectorAll("button, a, span, p, div")) {
+    if (!(el instanceof HTMLElement)) continue;
+    if (isSocialActionControl(el)) continue;
+    if (isSocialActionBar(el)) continue;
+
+    const aria = el.getAttribute("aria-label") ?? "";
+    const text = cleanInvisible(textOf(el));
+    if (!text || text.length > 80) continue;
+
+    // Skip nested wrappers once we've already seen the same leaf text.
+    if (el.children.length > 3 && text.length > 24) continue;
+
+    const looksSocial =
+      isBareCount(text) ||
+      /comments?|reactions?|reposts?|others/i.test(text) ||
+      /comments?|reactions?|reposts?|others/i.test(aria);
+    if (!looksSocial) continue;
+
+    texts.push(text);
+
+    if (isBareCount(text)) {
+      // Don't treat the comment/repost chip's number as reactions.
+      if (/comment|repost|share/i.test(aria)) continue;
+      if (el.closest('[data-view-name*="comment"], [data-view-name*="repost"]')) {
+        continue;
+      }
+      // Parent text like "1 comment" means this bare "1" is not reactions.
+      const parentText = cleanInvisible(textOf(el.parentElement));
+      if (/comments?|reposts?|shares?/i.test(parentText) && parentText.length < 60) {
+        continue;
+      }
+      bareCounts.push(text);
+    }
+  }
+
+  let reactions: string | undefined;
+  let comments: string | undefined;
+  let reposts: string | undefined;
+
+  for (const text of texts) {
+    if (!reactions) {
+      const labeled = text.match(/([\d,.]+[KkMm]?)\s*reactions?\b/i);
+      if (labeled?.[1]) reactions = labeled[1];
+    }
+    if (!comments) {
+      const labeled = text.match(/([\d,.]+[KkMm]?)\s*comments?\b/i);
+      if (labeled?.[1]) comments = labeled[1];
+    }
+    if (!reposts) {
+      const labeled = text.match(/([\d,.]+[KkMm]?)\s*reposts?\b/i);
+      if (labeled?.[1]) reposts = labeled[1];
+    }
+  }
+
+  const joined = texts.join(" · ");
+  if (!comments) {
+    const c = joined.match(/([\d,.]+[KkMm]?)\s*comments?\b/i);
+    if (c?.[1]) comments = c[1];
+  }
+  if (!reposts) {
+    const r = joined.match(/([\d,.]+[KkMm]?)\s*reposts?\b/i);
+    if (r?.[1]) reposts = r[1];
+  }
+  if (!reactions) {
+    const labeled = joined.match(/([\d,.]+[KkMm]?)\s*reactions?\b/i);
+    if (labeled?.[1]) reactions = labeled[1];
+  }
+
+  // Bare number beside the icons — exclude known comment/repost totals.
+  if (!reactions && bareCounts.length > 0) {
+    const skip = new Set(
+      [comments, reposts]
+        .filter((v): v is string => Boolean(v))
+        .map((v) => v.toLowerCase()),
+    );
+    const candidate = bareCounts.find((n) => !skip.has(n.toLowerCase()));
+    if (candidate) reactions = candidate;
+  }
+
+  // "43 · 1 comment • 5 reposts" — number preceding the comments clause.
+  if (!reactions) {
+    const beforeComments = joined.match(
+      /(?:^|[•·|]\s*)([\d,.]+[KkMm]?)\s*[•·|]?\s*(?=[\d,.]+[KkMm]?\s*comments?)/i,
+    );
+    if (
+      beforeComments?.[1] &&
+      beforeComments[1].toLowerCase() !== comments?.toLowerCase()
+    ) {
+      reactions = beforeComments[1];
+    }
+  }
+
+  return { reactions, comments };
+}
+
+/** Region that holds reaction icons + comment/repost chips (not the action bar). */
+function socialProofScope(root: HTMLElement): HTMLElement {
+  for (const sel of [
+    ".social-details-social-counts",
+    '[data-view-name*="social-count"]',
+    '[data-view-name="feed-social-social-counts"]',
+    '[data-view-name*="social-social-counts"]',
+  ]) {
+    const hit = root.querySelector(sel);
+    if (hit instanceof HTMLElement && !isSocialActionBar(hit)) return hit;
+  }
+
+  const bar = root.querySelector(
+    [
+      '[data-view-name="feed-social-action-bar"]',
+      ".feed-shared-social-action-bar",
+      ".update-components-action-bar",
+      '[data-view-name*="social-action"]',
+    ].join(", "),
+  );
+  if (bar instanceof HTMLElement) {
+    // Counts usually sit in the previous sibling of the action bar.
+    const prev = bar.previousElementSibling;
+    if (prev instanceof HTMLElement) return prev;
+    const parent = bar.parentElement;
+    if (parent instanceof HTMLElement) return parent;
+  }
+
+  return root;
+}
+
+function isBareCount(text: string): boolean {
+  return /^[\d,.]+[KkMm]?$/i.test(cleanInvisible(text));
+}
+
+/** Like / Comment / Repost / Send controls — not the count chips above them. */
+function isSocialActionControl(el: HTMLElement): boolean {
+  if (el.closest('[data-view-name="feed-social-action-bar"], .feed-shared-social-action-bar, .update-components-action-bar, [data-view-name*="social-action"]')) {
+    const aria = (el.getAttribute("aria-label") ?? "").toLowerCase();
+    const text = cleanInvisible(textOf(el)).toLowerCase();
+    // Action labels without a leading count.
+    if (
+      /^(?:like|unlike|unreact|comment|repost|share|send)(?:\s|$)/i.test(text) ||
+      /^(?:like|unlike|unreact|comment|repost|share|send)\b/i.test(aria)
+    ) {
+      // Still allow "Comment (3)" / "3 comments" style labels.
+      if (!/[\d,.]+/.test(aria) && !/[\d,.]+/.test(text)) return true;
+      if (
+        /^(?:like|unlike|unreact|comment|repost|share|send)$/i.test(aria) ||
+        /^(?:like|unlike|unreact|comment|repost|share|send)$/i.test(text)
+      ) {
+        return true;
+      }
+    }
+  }
+
+  const aria = (el.getAttribute("aria-label") ?? "").trim();
+  if (/^(?:like|comment|repost|share|send)$/i.test(aria)) return true;
+  return false;
+}
+
+function isSocialActionBar(el: HTMLElement): boolean {
+  return el.matches(
+    [
+      '[data-view-name="feed-social-action-bar"]',
+      ".feed-shared-social-action-bar",
+      ".update-components-action-bar",
+      '[data-view-name*="social-action"]',
+    ].join(", "),
+  );
 }
 
 function extractUrl(card: HTMLElement): string | undefined {
-  const anchor = card.querySelector<HTMLAnchorElement>(
-    'a[href*="/feed/update/"], a[href*="/posts/"], a[href*="urn:li:activity"]',
+  // Scope to the outer shell — same as reactions/comments/age — since the
+  // permalink anchor (when LinkedIn renders one) often lives above the
+  // inner `feed-full-update` node we're handed.
+  const root = extractionRoot(card);
+
+  const anchor = root.querySelector<HTMLAnchorElement>(
+    [
+      'a[href*="/feed/update/"]',
+      'a[href*="/posts/"]',
+      'a[href*="urn:li:activity"]',
+      ".update-components-actor__sub-description-link",
+      ".feed-shared-actor__sub-description-link",
+    ].join(", "),
   );
-  return anchor?.href;
+  if (anchor?.href) return anchor.href;
+
+  // LinkedIn's SDUI feed often has no real anchor for "copy link to post" —
+  // it's built client-side from the URN. Reconstruct it the same way from
+  // data-urn / data-id / componentkey, mirroring `collectSnowflakeIds`.
+  const urn = extractPostUrn(root);
+  return urn ? `https://www.linkedin.com/feed/update/${urn}/` : undefined;
+}
+
+/** Raw update URN (activity / ugcPost / share) used to rebuild a permalink. */
+function extractPostUrn(root: HTMLElement): string | undefined {
+  const attrs = ["data-urn", "data-id", "componentkey"];
+  const urnPattern = /urn:li:(?:activity|ugcPost|share):\d{15,22}/i;
+
+  const fromAttr = (el: Element): string | undefined => {
+    for (const attr of attrs) {
+      const match = el.getAttribute(attr)?.match(urnPattern);
+      if (match) return match[0];
+    }
+    return undefined;
+  };
+
+  const own = fromAttr(root);
+  if (own) return own;
+
+  for (const el of root.querySelectorAll("[data-urn], [data-id], [componentkey]")) {
+    const found = fromAttr(el);
+    if (found) return found;
+  }
+
+  return undefined;
 }
 
 function extractId(
