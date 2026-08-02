@@ -27,9 +27,9 @@ export type LlmCall = (request: LlmRequest) => Promise<string>;
 
 export type PostCategory = "technical" | "achievement" | "informal";
 
+/** Inferred from the author's LinkedIn headline only — no profile fetch. */
 export interface AuthorProfile {
-  estimatedTechnicalDepth: "non-technical" | "intermediate" | "expert";
-  postIntent: string;
+  isTechnical: boolean;
 }
 
 export interface PivotStrategy {

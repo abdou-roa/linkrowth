@@ -16,6 +16,12 @@ CATEGORY RULES:
 - "achievement": post announces a new role, product launch, certification, funding, or team milestone.
 - "informal": opinion, culture, productivity, remote work, or anything that doesn't fit the above.
 
+AUTHOR PROFILE RULES:
+- Use only the author's LinkedIn headline (provided in the user message) to set authorProfile.isTechnical.
+- true when the headline indicates an engineering, product-engineering, data/ML, or other hands-on technical role.
+- false for founders/execs without a technical signal, recruiters, marketers, sales, HR, coaches, or when the headline is missing/ambiguous.
+- Do NOT infer technical depth from the post body alone for this field — the headline is the signal.
+
 UNSPOKEN TRADE-OFFS RULES:
 - Only populate this array when category is "technical".
 - For achievement or informal posts, set it to an empty array [].
@@ -34,8 +40,7 @@ Return only the JSON object. No markdown fences, no explanation.
   "category": "technical | achievement | informal",
   "coreThesis": "<1–2 sentence summary of the author's main point>",
   "authorProfile": {
-    "estimatedTechnicalDepth": "non-technical | intermediate | expert",
-    "postIntent": "<one of: educate | inspire | announce | debate | vent | self-promote>"
+    "isTechnical": true
   },
   "unspokenTradeoffs": [
     "<direct implication of something the author explicitly named>"
@@ -74,7 +79,21 @@ function parseAnalysis(raw: string): AnalysisArtifact {
     parsed.unspokenTradeoffs = [];
   }
 
+  // Normalise: coerce isTechnical to a boolean
+  parsed.authorProfile = {
+    isTechnical: Boolean(parsed.authorProfile?.isTechnical),
+  };
+
   return parsed;
+}
+
+function buildUserMessage(state: EngageState): string {
+  const headline = state.post.author?.headline?.trim();
+  const authorLine = headline
+    ? `Author headline: ${headline}`
+    : "Author headline: (not available)";
+
+  return `${authorLine}\n\nPost:\n${state.post.text}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,7 +106,7 @@ export const analyzerStep: Step = {
   async run(state: EngageState, deps: StepDeps): Promise<StepResult> {
     const raw = await deps.call({
       system: SYSTEM_PROMPT,
-      user: state.post.text,
+      user: buildUserMessage(state),
       maxTokens: 512,
     });
 
@@ -98,7 +117,7 @@ export const analyzerStep: Step = {
       record: {
         name: "analyze",
         status: "completed",
-        summary: `${analysis.category} · ${analysis.coreThesis.slice(0, 80)}`,
+        summary: `${analysis.category} · ${analysis.authorProfile.isTechnical ? "technical author" : "non-technical author"} · ${analysis.coreThesis.slice(0, 80)}`,
         output: analysis,
       },
     };
