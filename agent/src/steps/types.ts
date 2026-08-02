@@ -27,9 +27,20 @@ export type LlmCall = (request: LlmRequest) => Promise<string>;
 
 export type PostCategory = "technical" | "achievement" | "informal";
 
+export type AuthorSeniority = "ic" | "leadership" | "founder" | "unknown";
+
+export type PostTone =
+  | "celebratory"
+  | "reflective"
+  | "frustrated"
+  | "analytical"
+  | "provocative"
+  | "neutral";
+
 /** Inferred from the author's LinkedIn headline only — no profile fetch. */
 export interface AuthorProfile {
   isTechnical: boolean;
+  seniority: AuthorSeniority;
 }
 
 export interface PivotStrategy {
@@ -41,9 +52,14 @@ export interface PivotStrategy {
 export interface AnalysisArtifact {
   category: PostCategory;
   coreThesis: string;
+  tone: PostTone;
   authorProfile: AuthorProfile;
+  /** The exact question posed to readers, if the post asks one directly. */
+  postQuestion: string | null;
   /** Empty array for non-technical posts. */
   unspokenTradeoffs: string[];
+  /** Sensitive topics (layoffs, grief, competitor bashing, politics, etc.) to handle carefully. Empty when none. */
+  riskFlags: string[];
   pivotStrategy: PivotStrategy;
 }
 
