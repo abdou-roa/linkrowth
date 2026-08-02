@@ -48,6 +48,15 @@ export interface PivotStrategy {
   insightToInject: string;
 }
 
+export type SuggestedLength = "short" | "standard" | "extended";
+export type TechnicalDepth = "high" | "accessible";
+
+/** Tells the Drafter how much to write and at what vocabulary level. */
+export interface ResponseParameters {
+  suggestedLength: SuggestedLength;
+  technicalDepth: TechnicalDepth;
+}
+
 /** Analyzer output: structural analysis of the post before any drafting. */
 export interface AnalysisArtifact {
   category: PostCategory;
@@ -61,6 +70,7 @@ export interface AnalysisArtifact {
   /** Sensitive topics (layoffs, grief, competitor bashing, politics, etc.) to handle carefully. Empty when none. */
   riskFlags: string[];
   pivotStrategy: PivotStrategy;
+  responseParameters: ResponseParameters;
 }
 
 /** Drafter / refiner output: the candidate comment. */

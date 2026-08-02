@@ -1,5 +1,11 @@
 import type { UserContext } from "../core/types";
-import type { AnalysisArtifact, AuthorSeniority, PostTone } from "./types";
+import type {
+  AnalysisArtifact,
+  AuthorSeniority,
+  PostTone,
+  SuggestedLength,
+  TechnicalDepth,
+} from "./types";
 import type { Step, StepResult } from "./types";
 import type { EngageState, StepDeps } from "./types";
 
@@ -74,6 +80,15 @@ PIVOT STRATEGY RULES:
 - If the post is entirely outside the user's niche, pivot the insight back to their domain via a relevant analogy or operational reality, rather than commenting on unfamiliar territory.
 - If "postQuestion" is set, "insightToInject" should directly answer or meaningfully reframe that question through the lens of the user's expertise.
 
+RESPONSE PARAMETERS RULES:
+- "suggestedLength": mirror the original author's effort — never write a lengthy deep-dive under a two-sentence hot take.
+  - "short": the post itself is brief, highly informal, or the author is non-technical.
+  - "standard": the default for ordinary professional or achievement posts.
+  - "extended": ONLY when the post is a deep technical dive AND "postQuestion" is set asking for community feedback or an architectural opinion.
+- "technicalDepth":
+  - "high" ONLY when category is "technical" AND authorProfile.isTechnical is true — signals the drafter to use precise, low-level engineering terminology.
+  - "accessible" for founders, non-technical authors, or achievement/informal posts — signals the drafter to stick to high-level business/operational realities without code-level jargon.
+
 OUTPUT FORMAT:
 Return only the JSON object. No markdown fences, no explanation.
 
@@ -95,6 +110,10 @@ Return only the JSON object. No markdown fences, no explanation.
   "pivotStrategy": {
     "acknowledgedPoint": "<specific claim or detail from the post>",
     "insightToInject": "<the angle that adds genuine value, grounded in the user's own domain authority>"
+  },
+  "responseParameters": {
+    "suggestedLength": "short | standard | extended",
+    "technicalDepth": "high | accessible"
   }
 }`;
 }
@@ -129,6 +148,9 @@ const VALID_TONES: PostTone[] = [
 
 const VALID_SENIORITIES: AuthorSeniority[] = ["ic", "leadership", "founder", "unknown"];
 
+const VALID_LENGTHS: SuggestedLength[] = ["short", "standard", "extended"];
+const VALID_DEPTHS: TechnicalDepth[] = ["high", "accessible"];
+
 function parseAnalysis(raw: string): AnalysisArtifact {
   const json = extractJson(raw);
   const parsed = JSON.parse(json) as AnalysisArtifact;
@@ -157,6 +179,26 @@ function parseAnalysis(raw: string): AnalysisArtifact {
     typeof parsed.postQuestion === "string" && parsed.postQuestion.trim()
       ? parsed.postQuestion.trim()
       : null;
+
+  // Normalise: fall back to safe defaults for unrecognised response parameters
+  const suggestedLength = VALID_LENGTHS.includes(parsed.responseParameters?.suggestedLength)
+    ? parsed.responseParameters.suggestedLength
+    : "standard";
+  const technicalDepth = VALID_DEPTHS.includes(parsed.responseParameters?.technicalDepth)
+    ? parsed.responseParameters.technicalDepth
+    : "accessible";
+
+  // Enforce the deterministic gate ourselves: "high" depth requires a technical
+  // category AND a technical author, regardless of what the model returned.
+  parsed.responseParameters = {
+    suggestedLength,
+    technicalDepth:
+      technicalDepth === "high" &&
+      parsed.category === "technical" &&
+      parsed.authorProfile.isTechnical
+        ? "high"
+        : "accessible",
+  };
 
   return parsed;
 }
@@ -201,7 +243,7 @@ export const analyzerStep: Step = {
       record: {
         name: "analyze",
         status: "completed",
-        summary: `${analysis.category} · ${analysis.tone} · ${analysis.authorProfile.isTechnical ? "technical author" : "non-technical author"} · ${analysis.coreThesis.slice(0, 80)}`,
+        summary: `${analysis.category} · ${analysis.tone} · ${analysis.authorProfile.isTechnical ? "technical author" : "non-technical author"} · ${analysis.responseParameters.suggestedLength}/${analysis.responseParameters.technicalDepth} · ${analysis.coreThesis.slice(0, 80)}`,
         output: analysis,
       },
     };
