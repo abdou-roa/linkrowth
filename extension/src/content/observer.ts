@@ -235,16 +235,20 @@ function hasActorProfileLink(card: HTMLElement): boolean {
     [
       ".update-components-actor",
       ".feed-shared-actor",
-      '[data-view-name*="feed-actor"]',
-      '[data-view-name*="feed-header"]',
-      ".update-components-header",
-      ".feed-shared-header",
+      '[data-view-name="feed-actor-image"]',
     ].join(", "),
   );
   if (!(actor instanceof HTMLElement)) return false;
 
+  const scope =
+    actor.getAttribute("data-view-name") === "feed-actor-image"
+      ? actor.parentElement instanceof HTMLElement
+        ? actor.parentElement
+        : actor
+      : actor;
+
   return Boolean(
-    actor.querySelector(
+    scope.querySelector(
       [
         'a[data-view-name="feed-actor-image"][href*="/in/"]',
         '[data-view-name="feed-actor-image"] a[href*="/in/"]',
