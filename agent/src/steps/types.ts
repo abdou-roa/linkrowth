@@ -79,6 +79,44 @@ export interface DraftArtifact {
   rationale?: string;
 }
 
+/**
+ * Dimensions the refiner reports on. Only "fabrication" and "length" send a
+ * draft back to the drafter; the rest are recorded for human review.
+ */
+export type FindingDimension =
+  | "fabrication"
+  | "length"
+  | "strategyFidelity"
+  | "questionObligation"
+  | "nicheSignature"
+  | "riskHandling"
+  | "voiceMatch";
+
+export interface CritiqueFinding {
+  dimension: FindingDimension;
+  /** Verbatim span from the draft, so a redraft knows exactly what to change. */
+  excerpt?: string;
+  /** Directive ("drop the 40% figure"), never an evaluation ("feels unsupported"). */
+  instruction: string;
+}
+
+/** Refiner output: a judgement on the draft. The refiner never rewrites. */
+export interface CritiqueArtifact {
+  verdict: "approved" | "rejected";
+  findings: CritiqueFinding[];
+}
+
+/**
+ * A rejected draft paired with why it was rejected. Keeping the draft (not just
+ * the notes) lets a redraft see the exact wording it must not repeat, and lets
+ * the runner pick the least-flawed draft when the attempt budget runs out.
+ */
+export interface DraftAttempt {
+  attempt: number;
+  draft: DraftArtifact;
+  findings: CritiqueFinding[];
+}
+
 export type EngageRunStatus = "in_progress" | "ready_for_review";
 
 /**
@@ -91,8 +129,8 @@ export interface EngageState {
   context?: UserContext;
   analysis?: AnalysisArtifact;
   draft?: DraftArtifact;
-  /** Refiner notes accumulated across reject → redraft cycles. */
-  feedbackHistory: string[];
+  /** Rejected drafts and their critiques, accumulated across redraft cycles. */
+  feedbackHistory: DraftAttempt[];
   attempts: number;
   status: EngageRunStatus;
   isApproved?: boolean;

@@ -1,3 +1,4 @@
+import { extractJsonBlock } from "../core/parse";
 import type { UserContext } from "../core/types";
 import type {
   AnalysisArtifact,
@@ -119,23 +120,8 @@ Return only the JSON object. No markdown fences, no explanation.
 }
 
 // ---------------------------------------------------------------------------
-// JSON extraction
+// Response parsing
 // ---------------------------------------------------------------------------
-
-function extractJson(raw: string): string {
-  // Strip markdown code fences if the model wraps the output anyway
-  const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) return fenceMatch[1].trim();
-
-  // Find the outermost { ... } block
-  const start = raw.indexOf("{");
-  const end = raw.lastIndexOf("}");
-  if (start !== -1 && end !== -1 && end > start) {
-    return raw.slice(start, end + 1);
-  }
-
-  return raw.trim();
-}
 
 const VALID_TONES: PostTone[] = [
   "celebratory",
@@ -152,7 +138,7 @@ const VALID_LENGTHS: SuggestedLength[] = ["short", "standard", "extended"];
 const VALID_DEPTHS: TechnicalDepth[] = ["high", "accessible"];
 
 function parseAnalysis(raw: string): AnalysisArtifact {
-  const json = extractJson(raw);
+  const json = extractJsonBlock(raw);
   const parsed = JSON.parse(json) as AnalysisArtifact;
 
   // Normalise: guarantee array fields are always arrays
@@ -181,9 +167,14 @@ function parseAnalysis(raw: string): AnalysisArtifact {
       : null;
 
   // Normalise: fall back to safe defaults for unrecognised response parameters
-  const suggestedLength = VALID_LENGTHS.includes(parsed.responseParameters?.suggestedLength)
+  const requestedLength = VALID_LENGTHS.includes(parsed.responseParameters?.suggestedLength)
     ? parsed.responseParameters.suggestedLength
     : "standard";
+
+  // A "short" budget can't hold an acknowledgment, an injected insight, and an
+  // answer to a direct question — the answer is what gets dropped. Floor it.
+  const suggestedLength =
+    parsed.postQuestion && requestedLength === "short" ? "standard" : requestedLength;
   const technicalDepth = VALID_DEPTHS.includes(parsed.responseParameters?.technicalDepth)
     ? parsed.responseParameters.technicalDepth
     : "accessible";
