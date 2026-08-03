@@ -35,7 +35,7 @@ function buildUserDomainSection(context?: UserContext): string {
     lines.push(`- Opinions this person holds: ${context.opinions.join("; ")}`);
   }
 
-  return `USER DOMAIN CONTEXT (the person who will post the eventual comment — every trade-off and insight below must be filtered through this):\n${lines.join("\n")}`;
+  return `USER DOMAIN CONTEXT (The person who will post the eventual comment. CRITICAL: Apply this context to your analysis ONLY if the post topic naturally intersects with this niche. If unrelated, ignore this section entirely):\n${lines.join("\n")}`;
 }
 
 function buildSystemPrompt(context?: UserContext): string {
@@ -77,9 +77,9 @@ RISK FLAG RULES:
 
 PIVOT STRATEGY RULES:
 - "acknowledgedPoint": the single strongest claim or detail from the post worth referencing — be specific, not generic.
-- "insightToInject": the exact angle the drafter should take. This MUST align with the user's background and opinions from the USER DOMAIN CONTEXT above — draw on their specific experience and stated positions, not generic industry knowledge.
-- If the post is entirely outside the user's niche, pivot the insight back to their domain via a relevant analogy or operational reality, rather than commenting on unfamiliar territory.
-- If "postQuestion" is set, "insightToInject" should directly answer or meaningfully reframe that question through the lens of the user's expertise.
+- "insightToInject": the exact angle the drafter should take. This MUST align with the user's background and opinions from the USER DOMAIN CONTEXT above ONLY IF the post naturally intersects with software, AI, or engineering.
+- CRITICAL ESCAPE HATCH: If the post is entirely outside the user's niche (e.g., sales, marketing, generic motivation, unrelated industries), DO NOT force a connection to the user's domain or invent analogies. Instead, set "insightToInject" to a thoughtful, grounded observation focused purely on the original author's thesis, completely ignoring the USER DOMAIN CONTEXT.
+- If "postQuestion" is set, "insightToInject" should directly answer or meaningfully reframe that question.
 
 RESPONSE PARAMETERS RULES:
 - "suggestedLength": mirror the original author's effort — never write a lengthy deep-dive under a two-sentence hot take.
