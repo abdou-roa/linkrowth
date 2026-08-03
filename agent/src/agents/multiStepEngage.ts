@@ -17,10 +17,11 @@ export const MULTI_STEP_ENGAGE_AGENT_ID = "multi_step_engage";
 const MAX_REFINE_ATTEMPTS = 2;
 
 /**
- * TEMP — stop after the analyzer so we can inspect analysis quality.
- * Flip to false once drafter/refiner are ready to run end-to-end.
+ * TEMP — stop after the drafter so we can inspect whether the draft
+ * actually consumes the analyzer output. Flip to false once the refiner
+ * is ready to run end-to-end.
  */
-const ANALYSIS_ONLY = true;
+const DRAFT_ONLY = true;
 
 /** Factory function to initialize clean state per execution. */
 function createInitialState(input: AgentRunInput): EngageState {
@@ -61,21 +62,16 @@ export class MultiStepEngageAgent implements Agent {
     // 2. Step 1: Analyze the post
     state = await this.executeStep(analyzerStep, state);
 
-    if (ANALYSIS_ONLY) {
+    // 3. Step 2: Draft initial comment from the analysis
+    state = await this.executeStep(drafterStep, state);
+
+    if (DRAFT_ONLY) {
       return {
         agentId: this.id,
-        result: {
-          suggestion: "(analysis-only — drafting skipped)",
-          rationale: JSON.stringify(state.analysis, null, 2),
-          category: state.analysis?.category,
-          coreSubject: state.analysis?.coreThesis,
-        },
+        result: finalizeResult(state),
         steps: state.steps,
       };
     }
-
-    // 3. Step 2: Draft initial comment
-    state = await this.executeStep(drafterStep, state);
 
     // 4. Step 3 & Reflection Loop: Refine <-> Draft
     while (state.attempts <= MAX_REFINE_ATTEMPTS) {
