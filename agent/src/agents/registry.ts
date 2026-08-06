@@ -13,7 +13,7 @@ const agents = new Map<string, Agent>([
   [MULTI_STEP_ENGAGE_AGENT_ID, multiStepEngageAgent],
 ]);
 
-export const DEFAULT_AGENT_ID = ONE_SHOT_ENGAGE_AGENT_ID;
+export const DEFAULT_AGENT_ID = MULTI_STEP_ENGAGE_AGENT_ID;
 
 /** Resolve an agent by id, falling back to LINKROWTH_AGENT then the default. */
 export function getAgent(id?: string): Agent {
