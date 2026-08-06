@@ -76,16 +76,26 @@ RISK FLAG RULES:
 - Set it to an empty array [] when the post is safe, ordinary professional content.
 
 PIVOT STRATEGY RULES:
-- "acknowledgedPoint": the single strongest claim or detail from the post worth referencing — be specific, not generic.
-- "insightToInject": the exact angle the drafter should take. This MUST align with the user's background and opinions from the USER DOMAIN CONTEXT above ONLY IF the post naturally intersects with software, AI, or engineering.
-- CRITICAL ESCAPE HATCH: If the post is entirely outside the user's niche (e.g., sales, marketing, generic motivation, unrelated industries), DO NOT force a connection to the user's domain or invent analogies. Instead, set "insightToInject" to a thoughtful, grounded observation focused purely on the original author's thesis, completely ignoring the USER DOMAIN CONTEXT.
+- "acknowledgedPoint": the single strongest claim or detail from the post worth referencing — pull an exact detail (a number, a named tool, a decision, a phrase), not a summary of the post's vibe.
+- "insightToInject": the exact angle the drafter should take. Write it as the reaction a genuinely engaged peer would have on reading this — never as a restatement, amplification, or agreement with what the post already says.
+  - ANTI-VALIDATION TEST: before finalizing this field, ask "would ten other commenters land on this same sentiment?" If yes, it's validation, not insight — discard it and find a sharper one. This failure mode is most common on "achievement" and "informal" posts, where the reflexive move is to agree with the post's own framing (e.g. congratulating the win, agreeing the opinion is relatable). Do not let the category change the standard: every insightToInject must add something the post's author did not already say.
+  - For "achievement": do not restate why the milestone is impressive in the terms the post already used. Instead surface a specific, non-obvious implication — what the milestone likely required, what it probably unlocks or complicates next, or a forward-looking observation. State it as a genuine observation, not a compliment.
+    - BAD (pure validation): "Huge milestone — this shows how much hard work paid off."
+    - GOOD (adds something new): "The jump from prototype to paying customers this fast usually means the retention story is doing more work than the acquisition story — curious which one surprised you more."
+  - For "informal": do not agree with the post's opinion in its own terms. Instead surface a related nuance, tension, or lived pattern the take glosses over — something specific enough that it reads as a genuine reaction, not a polite nod.
+    - BAD (pure validation): "Totally agree, remote work really does help with deep focus."
+    - GOOD (adds something new): "Focus goes up short-term, but the real tax shows up a few months in as context-switching between async threads piles up."
+  - A mildly surprised, curious, or grounded-but-divergent reaction is fine and encouraged — it reads more human than flat agreement.
+  - This MUST align with the user's background and opinions from the USER DOMAIN CONTEXT above ONLY IF the post naturally intersects with that person's niche (as stated in USER DOMAIN CONTEXT above — never a fixed list of topics, since the niche is configured per-user and will vary).
+- CRITICAL ESCAPE HATCH: If the post is entirely outside the niche stated in USER DOMAIN CONTEXT above, DO NOT force a connection to the user's domain or invent analogies. Instead, set "insightToInject" to a thoughtful, grounded observation focused purely on the original author's thesis, completely ignoring the USER DOMAIN CONTEXT — but it must still pass the ANTI-VALIDATION TEST above.
 - If "postQuestion" is set, "insightToInject" should directly answer or meaningfully reframe that question.
 
 RESPONSE PARAMETERS RULES:
-- "suggestedLength": mirror the original author's effort — never write a lengthy deep-dive under a two-sentence hot take.
-  - "short": the post itself is brief, highly informal, or the author is non-technical.
-  - "standard": the default for ordinary professional or achievement posts.
+- "suggestedLength": mirror the actual length and weight of the post itself — judge this from the post's own word/sentence count and how much substance it contains, not from its category. "standard" is NOT the reflexive default; most posts, including most achievement posts, are short.
+  - "short": the post is roughly under 3 sentences, a quick celebratory note, a one-liner opinion, or has essentially one point. This covers most informal posts and simple achievement announcements.
+  - "standard": the post lays out 2+ distinct points, a specific story, or enough concrete detail that a one-liner reaction would leave value on the table.
   - "extended": ONLY when the post is a deep technical dive AND "postQuestion" is set asking for community feedback or an architectural opinion.
+  - When genuinely unsure between two tiers, choose the shorter one — a comment that reads slightly terse is more human than one padded to hit a length.
 - "technicalDepth":
   - "high" ONLY when category is "technical" AND authorProfile.isTechnical is true — signals the drafter to use precise, low-level engineering terminology.
   - "accessible" for founders, non-technical authors, or achievement/informal posts — signals the drafter to stick to high-level business/operational realities without code-level jargon.
