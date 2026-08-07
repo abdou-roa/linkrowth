@@ -61,7 +61,8 @@ function buildQuestionSection(analysis: AnalysisArtifact): string | null {
 function buildStrategySection(analysis: AnalysisArtifact): string {
   return `Your comment must express this angle:
 - Acknowledged point: "${analysis.pivotStrategy.acknowledgedPoint}"
-- Insight to inject: "${analysis.pivotStrategy.insightToInject}"`;
+- Core Domain Concept to Bridge: "${analysis.pivotStrategy.identifiedBridge}"
+  (CRITICAL INSTRUCTION: Use this core concept as the foundation of your insight. Do not just repeat the concept — use your engineering knowledge and playbook rules to write a natural, high-level observation about it).`;
 }
 
 function buildCalibrationSection(analysis: AnalysisArtifact): string {

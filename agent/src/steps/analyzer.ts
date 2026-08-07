@@ -22,7 +22,7 @@ import type { EngageState, StepDeps } from "./types";
 function buildUserDomainSection(context?: UserContext): string {
   if (!context) {
     return `USER DOMAIN CONTEXT:
-(not available — leave "unspokenTradeoffs" empty and keep "pivotStrategy.insightToInject" general rather than inventing a domain fit.)`;
+(not available — leave "unspokenTradeoffs" empty and keep "pivotStrategy.identifiedBridge" general rather than inventing a domain fit.)`;
   }
 
   const lines = [`- Niche: ${context.niche}`];
@@ -77,18 +77,11 @@ RISK FLAG RULES:
 
 PIVOT STRATEGY RULES:
 - "acknowledgedPoint": the single strongest claim or detail from the post worth referencing — pull an exact detail (a number, a named tool, a decision, a phrase), not a summary of the post's vibe.
-- "insightToInject": the exact angle the drafter should take. Write it as the reaction a genuinely engaged peer would have on reading this — never as a restatement, amplification, or agreement with what the post already says.
-  - ANTI-VALIDATION TEST: before finalizing this field, ask "would ten other commenters land on this same sentiment?" If yes, it's validation, not insight — discard it and find a sharper one. This failure mode is most common on "achievement" and "informal" posts, where the reflexive move is to agree with the post's own framing (e.g. congratulating the win, agreeing the opinion is relatable). Do not let the category change the standard: every insightToInject must add something the post's author did not already say.
-  - For "achievement": do not restate why the milestone is impressive in the terms the post already used. Instead surface a specific, non-obvious implication — what the milestone likely required, what it probably unlocks or complicates next, or a forward-looking observation. State it as a genuine observation, not a compliment.
-    - BAD (pure validation): "Huge milestone — this shows how much hard work paid off."
-    - GOOD (adds something new): "The jump from prototype to paying customers this fast usually means the retention story is doing more work than the acquisition story — curious which one surprised you more."
-  - For "informal": do not agree with the post's opinion in its own terms. Instead surface a related nuance, tension, or lived pattern the take glosses over — something specific enough that it reads as a genuine reaction, not a polite nod.
-    - BAD (pure validation): "Totally agree, remote work really does help with deep focus."
-    - GOOD (adds something new): "Focus goes up short-term, but the real tax shows up a few months in as context-switching between async threads piles up."
-  - A mildly surprised, curious, or grounded-but-divergent reaction is fine and encouraged — it reads more human than flat agreement.
-  - This MUST align with the user's background and opinions from the USER DOMAIN CONTEXT above ONLY IF the post naturally intersects with that person's niche (as stated in USER DOMAIN CONTEXT above — never a fixed list of topics, since the niche is configured per-user and will vary).
-- CRITICAL ESCAPE HATCH: If the post is entirely outside the niche stated in USER DOMAIN CONTEXT above, DO NOT force a connection to the user's domain or invent analogies. Instead, set "insightToInject" to a thoughtful, grounded observation focused purely on the original author's thesis, completely ignoring the USER DOMAIN CONTEXT — but it must still pass the ANTI-VALIDATION TEST above.
-- If "postQuestion" is set, "insightToInject" should directly answer or meaningfully reframe that question.
+- "identifiedBridge": The raw conceptual link between the post and the user's domain. Do NOT write a reaction, a sentence, or a draft. Output 1-3 abstract words indicating the core engineering concept the drafter should focus on. 
+  - Example (Technical): "redis-latency-limits"
+  - Example (Achievement): "deterministic-system-management"
+  - Example (Informal): "async-context-switching-tax"
+- CRITICAL ESCAPE HATCH: If the post is entirely outside the niche stated in USER DOMAIN CONTEXT above, DO NOT force a connection to the user's domain. Instead, set "identifiedBridge" to the core technical or operational bottleneck mentioned in the post itself.
 
 RESPONSE PARAMETERS RULES:
 - "suggestedLength": mirror the actual length and weight of the post itself — judge this from the post's own word/sentence count and how much substance it contains, not from its category. "standard" is NOT the reflexive default; most posts, including most achievement posts, are short.
@@ -120,7 +113,7 @@ Return only the JSON object. No markdown fences, no explanation.
   ],
   "pivotStrategy": {
     "acknowledgedPoint": "<specific claim or detail from the post>",
-    "insightToInject": "<the angle that adds genuine value, grounded in the user's own domain authority>"
+    "identifiedBridge": "<1-3 abstract words naming the core engineering concept>"
   },
   "responseParameters": {
     "suggestedLength": "short | standard | extended",

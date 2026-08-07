@@ -45,7 +45,7 @@ export interface AuthorProfile {
 
 export interface PivotStrategy {
   acknowledgedPoint: string;
-  insightToInject: string;
+  identifiedBridge: string;
 }
 
 export type SuggestedLength = "short" | "standard" | "extended";

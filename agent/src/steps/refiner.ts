@@ -96,7 +96,7 @@ function buildAnalysisSection(analysis: AnalysisArtifact): string {
   const lines = [
     `- The post's core thesis: ${analysis.coreThesis}`,
     `- Point the draft was told to acknowledge: "${analysis.pivotStrategy.acknowledgedPoint}"`,
-    `- Insight the draft was told to inject: "${analysis.pivotStrategy.insightToInject}"`,
+    `- Core domain concept the draft was told to bridge: "${analysis.pivotStrategy.identifiedBridge}"`,
     `- Author's register: ${analysis.tone}`,
   ];
 
