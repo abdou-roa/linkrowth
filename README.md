@@ -13,10 +13,10 @@
 [![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4285F4.svg?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 
-[![Providers](https://img.shields.io/badge/LLM-OpenAI%20%C2%B7%20Gemini%20%C2%B7%20Claude%20%C2%B7%20Kimi-412991.svg)](#-swappable-llm-providers)
-[![Episode](https://img.shields.io/badge/Episode-1%20shipped-brightgreen.svg)](./docs/EPISODE-1.md)
+[![Providers](https://img.shields.io/badge/LLM-OpenAI%20%C2%B7%20Gemini-412991.svg)](#-swappable-llm-providers)
+[![Pipeline](https://img.shields.io/badge/Pipeline-analyze%20%E2%86%92%20draft%20%E2%86%92%20refine-brightgreen.svg)](#-multi-step-engage-pipeline)
 [![Series](https://img.shields.io/badge/%23PromptToArchitecture-000.svg)](./docs/CONTENT-STRATEGY.md)
-[![Human-in-the-loop](https://img.shields.io/badge/Human--in--the--loop-ToS%20clean-success.svg)](#-principles-non-goals)
+[![Human-in-the-loop](https://img.shields.io/badge/Human--in--the--loop-ToS%20clean-success.svg)](#-principles--non-goals)
 
 </div>
 
@@ -38,7 +38,7 @@ This repo is built as a public series — **From One Prompt to a Fully Architect
 
 ## The core abstraction
 
-One surface-agnostic function. The CLI, the API worker, and the browser extension are all just consumers of it:
+One surface-agnostic function. The CLI, the API worker, and the browser extension are all consumers of it:
 
 ```ts
 engage(post, context) → { suggestion, rationale }
@@ -47,64 +47,86 @@ engage(post, context) → { suggestion, rationale }
 | Param | Type | Description |
 |---|---|---|
 | `post` | `string` (+ optional author) | The LinkedIn post to engage with |
-| `context` | `UserContext` | Your niche, positioning, target audience (+ voice, later) |
+| `context` | `UserContext` | Your niche, positioning, voice, substance, and guardrails |
 | `suggestion` | `string` | A comment that demonstrates expertise and invites a reply |
 | `rationale` | `string` | One line: why this comment serves the goal |
 
 **Invariant:** this signature stays stable across every Episode. New layers wrap it; they never change it.
 
+Today the default runtime path is no longer a single LLM call — it is a **multi-step agent** (`analyze → draft → refine`) that still returns the same `{ suggestion, rationale }` shape. The pure one-shot `engage()` remains available via `LINKROWTH_AGENT=one_shot_engage`.
+
 ## The Episode ladder
 
-Each Episode adds exactly one layer, and only when the previous one has a *demonstrable* failure.
+Each Episode adds exactly one layer, and only when the previous one has a *demonstrable* failure. Work has advanced out of strict ladder order where the architecture demanded it — statuses below reflect what is actually in the repo.
 
 | Episode | Layer | Villain it fixes | Status |
 |---|---|---|---|
 | **1** | `engage()` core + paste-in CLI | "Generic — sounds like everyone" | ✅ **shipped** |
-| **2** | Voice: your past writing as context | "Right voice, but why this post?" | 🔜 planned |
-| **3** | Triage: score whether a post is worth engaging | "Good comment, I still hunt posts manually" | 🔜 planned |
-| **4** | Browser extension surfaces the feed | "It forgets who I've already talked to" | 🚧 in progress (feed triage live) |
+| **2** | Voice: past writing + persona as context | "Right voice, but why this post?" | ✅ **shipped** |
+| **3** | Triage: score whether a post is worth engaging | "Good comment, I still hunt posts manually" | ✅ **shipped** (heuristic, in-extension) |
+| **4** | Browser extension surfaces the feed | "It forgets who I've already talked to" | ✅ **shipped** (feed → triage → Generate via API) |
 | **5** | Memory: relationships, history, no repeats | "One-shot drafts are mediocre" | 🔜 planned |
-| **6** | Critic loop: draft → tone/authority check → revise | "It's a pile of scripts" | 🔜 planned |
+| **6** | Critic loop: analyze → draft → refine | "It's a pile of scripts" | 🚧 **in progress** (pipeline live; reject → redraft loop gated) |
 | **7** | Orchestration: daily prioritized engagement queue | Season finale / X port | 🔜 planned |
 
-> Full rationale, decision log, and data model: [`docs/SPEC.md`](./docs/SPEC.md).
+> Full rationale, decision log, and data model: [`docs/SPEC.md`](./docs/SPEC.md). Multi-step design: [`docs/MULTI-STEP-AGENT.md`](./docs/MULTI-STEP-AGENT.md).
 
 ## Architecture
 
 ```text
-                       ┌─────────────────────────────┐
-   LinkedIn feed  ───►  │  extension/  (Chrome MV3)    │  observe → extract → score
-                       │  triage badges + side panel │  → "worth it?" (heuristic today)
-                       └───────────────┬─────────────┘
-                                       │ HTTP (planned bridge)
+   LinkedIn feed  ───►  extension/  (Chrome MV3)
+                        observe → extract → heuristic triage
+                        badges + side panel + Generate CTA
+                                       │
+                                       │ HTTP  POST/GET /v1/suggestions
                                        ▼
-                       ┌─────────────────────────────┐
-                       │  api/  (Express gateway)     │  Bearer auth · enqueue job
-                       │  POST/GET /v1/suggestions    │  persist post + run
-                       └───────────────┬─────────────┘
-                                       │ worker calls
+                        api/  (Express gateway)
+                        Bearer auth · enqueue job · in-process worker
+                                       │
+                                       │ @linkrowth/agent/runs
                                        ▼
-                       ┌─────────────────────────────┐
-                       │  agent/  engage(post, ctx)   │  the stable brain
-                       │  provider-agnostic llm.call()│  → { suggestion, rationale }
-                       └───────────────┬─────────────┘
+                        agent/  multi_step_engage (default)
+                        analyze → draft → refine
+                        (one_shot_engage still available)
+                                       │
                                        ▼
-                              Postgres (posts + runs, reasoning as JSON)
+                              Postgres (posts + suggestion_jobs + suggestion_runs)
+```
+
+## Multi-step engage pipeline
+
+Default agent id: `multi_step_engage` (override with `LINKROWTH_AGENT`).
+
+```text
+post + UserContext
+        │
+        ▼
+   analyzer   → category, tone, author profile, pivot strategy, length/depth
+        │
+        ▼
+   drafter    → comment draft + rationale (category playbook + voice)
+        │
+        ▼
+   refiner    → critique against anti-AI / voice / length guardrails
+                (reject → redraft loop exists; currently critique-only while tuning)
+        │
+        ▼
+   { suggestion, rationale }  (+ reasoning steps persisted as JSON)
 ```
 
 ## Repository layout
 
 ```text
 linkrowth/
-├── agent/        # engage CLI + agent brain — provider-agnostic LLM clients + Postgres runs + evals
-├── api/          # Express API gateway — Bearer auth, suggestion job enqueue/poll
-├── extension/    # Chrome MV3 LinkedIn feed triage — observe, score, badge, side panel
+├── agent/        # engage brain — multi-step agents, LLM clients, Postgres runs, evals
+├── api/          # Express gateway — Bearer auth, suggestion jobs; depends on @linkrowth/agent
+├── extension/    # Chrome MV3 — feed triage, side panel, Generate comment → API
 ├── helpers/      # schema.sql + migrate.sh (applied on Postgres first boot)
-├── docs/         # SPEC, episode plans, content strategy, schema, integration notes
+├── docs/         # SPEC, multi-step design, schema, integration notes, content strategy
 └── docker-compose.yml   # Postgres + API containers
 ```
 
-The repo root has **no** `package.json` and **no** `.env`. Each package is independent — they don't import each other and connect over HTTP. Work inside each one.
+Packages are mostly independent. The **API** depends on the **agent** via a local `file:` package (`@linkrowth/agent`). The **extension** talks to the API over HTTP only.
 
 ## Quick start
 
@@ -134,7 +156,12 @@ Paste a post at the prompt, or pipe one in:
 echo "Your post text here…" | npm run engage
 ```
 
-`engage` persists each post and run (including reasoning steps as JSON) to Postgres. It requires a reachable `DATABASE_URL` — there is no in-memory fallback.
+Swap pipelines without code changes:
+
+```bash
+LINKROWTH_AGENT=one_shot_engage npm run engage   # single LLM call
+# default: multi_step_engage
+```
 
 ### 2. API (the gateway)
 
@@ -143,39 +170,41 @@ echo "Your post text here…" | npm run engage
 # helpers/schema.sql is applied automatically on first Postgres boot.
 docker compose up -d --build
 
-curl http://localhost:4000/health              # {"ok":true,"service":"linkrowth-api"}
+curl http://localhost:4000/health              # {"ok":true,"service":"linkrowth-api",…}
 ```
 
 Re-apply the schema to an existing volume with `./helpers/migrate.sh` (add `--reset` to replace an incompatible schema). Run the API on the host instead with `cd api && cp .env.example .env && npm install && npm run dev`. Endpoint reference: [`api/ENDPOINTS.md`](./api/ENDPOINTS.md).
 
 ### 3. Extension (the feed)
 
+Needs the API running for **Generate comment**. Local triage (score / badges / side panel) works without it.
+
 ```bash
+# From repo root first: docker compose up -d --build
+
 cd extension
-cp .env.example .env       # optional until the API bridge lands
+cp .env.example .env       # LINKROWTH_API_URL + LINKROWTH_API_KEY (match api/.env API_KEY)
 npm install
 npm run build              # → extension/dist
 npm run dev                # Vite + CRX HMR
 ```
 
-Load it in Chrome: `chrome://extensions` → enable Developer mode → **Load unpacked** → select `extension/dist`. Open the LinkedIn feed, click the Linkrowth action to open the side panel, and scroll — fully visible posts get scored and badged. Details: [`extension/README.md`](./extension/README.md), scoring rules in [`extension/SCORING.md`](./extension/SCORING.md).
+Load it in Chrome: `chrome://extensions` → enable Developer mode → **Load unpacked** → select `extension/dist`. Open the LinkedIn feed, click the Linkrowth action to open the side panel, and scroll — fully visible posts get scored and badged. Open a comment box (or focus a post from the panel) to use **Generate comment**, which calls the API and fills the draft. Details: [`extension/README.md`](./extension/README.md), scoring rules in [`extension/SCORING.md`](./extension/SCORING.md).
 
 ## Swappable LLM providers
 
 The agent routes every call through a single provider-agnostic `llm.call()`. Switch providers with one env var — no code change:
 
 ```bash
-LINKROWTH_PROVIDER=openai   # openai (default) · gemini · anthropic · kimi
+LINKROWTH_PROVIDER=openai   # openai (default) · gemini
 ```
 
 | Provider | Env key | Default model | Status |
 |---|---|---|---|
 | OpenAI | `OPENAI_API_KEY` | `gpt-4o-mini` | ✅ implemented |
 | Gemini | `GEMINI_API_KEY` | `gemini-2.5-flash` | ✅ implemented |
-| Anthropic | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` | ⬜ stub |
-| Kimi / Moonshot | `KIMI_API_KEY` | `moonshot-v1-8k` | ⬜ stub |
 
-Only the active provider's key is validated at startup (fail-fast). Full matrix: [`docs/SPEC.md`](./docs/SPEC.md) §9.
+Only the active provider's key is validated at startup (fail-fast). Anthropic / Kimi are deferred until a real provider gap appears.
 
 ## Evals
 
@@ -189,18 +218,22 @@ cd agent && npm run eval
 
 - **No scraping, no ToS violations.** Feed access is via a browser extension with the human present — never headless automation.
 - **No autonomous posting.** The agent suggests; the human ships. Always human-in-the-loop.
-- **No SaaS until it earns it.** CLI first, extension second. No server infra before the architecture demands it.
+- **Earn the infra.** CLI first, then extension + API when feed triage and suggestion jobs needed them. No Kafka / vector DB until a visible failure demands it.
 
 ## Documentation
 
 | Doc | What's inside |
 |---|---|
 | [`docs/SPEC.md`](./docs/SPEC.md) | Technical & functional spec, episode ladder, decision log |
+| [`docs/MULTI-STEP-AGENT.md`](./docs/MULTI-STEP-AGENT.md) | Agents / steps design (analyzer → drafter → refiner) |
+| [`docs/structure.md`](./docs/structure.md) | Agent package layering and module rules |
 | [`docs/EPISODE-1.md`](./docs/EPISODE-1.md) | Episode 1 scope, contract, and ship gate |
 | [`docs/CONTENT-STRATEGY.md`](./docs/CONTENT-STRATEGY.md) | The build-in-public content engine |
 | [`docs/POSTING-PLAYBOOK.md`](./docs/POSTING-PLAYBOOK.md) | Post archetypes and worked examples |
-| [`docs/database-schema.md`](./docs/database-schema.md) | Posts + runs schema |
+| [`docs/database-schema.md`](./docs/database-schema.md) | Posts + jobs + runs schema |
 | [`docs/extension-integration.md`](./docs/extension-integration.md) | How the extension, API, and agent connect |
+| [`api/ENDPOINTS.md`](./api/ENDPOINTS.md) | HTTP API reference |
+| [`extension/README.md`](./extension/README.md) | Extension runtime guide |
 
 ## License
 
