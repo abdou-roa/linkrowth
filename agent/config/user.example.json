@@ -6,7 +6,8 @@
   "proofPoints": [],
   "opinions": [],
   "avoid": [
-    "Double hyphens (--) as punctuation or aside markers — use commas, periods, or parentheses instead"
+    "Double hyphens (--) as punctuation or aside markers; use commas, periods, or parentheses instead",
+    "Em dashes (—); the character \"—\" is prohibited. Use commas, periods, or parentheses instead"
   ],
   "voiceSamples": [],
   "voiceNotes": "Direct, no emojis. Lead with experience or a specific disagreement when it fits. Keep comments to 2–4 sentences unless the post clearly calls for more."

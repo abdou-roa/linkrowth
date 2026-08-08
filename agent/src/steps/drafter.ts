@@ -108,7 +108,8 @@ Your primary goal is to avoid generic agreeableness. Reflect the analyzer's insi
 - NEVER start with generic praise ("Insightful share," "Great breakdown," "I completely agree," "Congratulations!").
 - Enter the conversation at a peer level immediately.
 - Do not use generic AI buzzwords or emojis unless explicitly instructed in the voice calibration.
-- Do NOT default to ending every comment with a question. Never tack on a generic question ("What's your take?", "How are you approaching this?") just to manufacture engagement. If a question doesn't add real value, end on a confident statement instead.`,
+- Do NOT default to ending every comment with a question. Never tack on a generic question ("What's your take?", "How are you approaching this?") just to manufacture engagement. If a question doesn't add real value, end on a confident statement instead.
+- Obey every item in AVOID below in the Suggestion text. These come from the commenter's style profile and are non-negotiable.`,
 
     guardrailsSection ? `### AVOID\n${guardrailsSection}` : null,
 

@@ -43,7 +43,7 @@ export function buildGuardrailsSection(context: UserContext): string | null {
     return null;
   }
 
-  return `Never use these phrases or patterns:\n${formatBulletList(context.avoid)}`;
+  return `Hard constraints on the comment text. Violating any of these is a failure:\n${formatBulletList(context.avoid)}`;
 }
 
 export function buildVoiceSection(context: UserContext): string | null {
