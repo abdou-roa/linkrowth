@@ -18,8 +18,8 @@ const MAX_REFINE_ATTEMPTS = 2;
 
 /**
  * TEMP — run analyze → draft → refine once and stop, so the critique can be
- * inspected against real drafts. Flip to false once the drafter consumes
- * feedbackHistory and the reject → redraft loop is wired up.
+ * inspected against real drafts. The drafter now consumes feedbackHistory;
+ * flip to false to enable the reject → redraft loop.
  */
 const CRITIQUE_ONLY = true;
 

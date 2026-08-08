@@ -5,7 +5,14 @@ import {
   buildVoiceSection,
 } from "../core/prompt";
 import type { UserContext } from "../core/types";
-import type { AnalysisArtifact, DraftArtifact, PostCategory, SuggestedLength } from "./types";
+import type {
+  AnalysisArtifact,
+  CritiqueFinding,
+  DraftArtifact,
+  DraftAttempt,
+  PostCategory,
+  SuggestedLength,
+} from "./types";
 import type { Step, StepResult } from "./types";
 import type { EngageState, StepDeps } from "./types";
 import { answerableQuestions } from "./types";
@@ -106,15 +113,68 @@ function buildCalibrationSection(analysis: AnalysisArtifact): string {
   }`;
 }
 
-function buildSystemPrompt(analysis: AnalysisArtifact, context?: UserContext): string {
+function formatFinding(finding: CritiqueFinding): string {
+  const excerpt = finding.excerpt?.trim()
+    ? ` on "${finding.excerpt.trim()}" →`
+    : "";
+  return `- [${finding.dimension}]${excerpt} ${finding.instruction}`;
+}
+
+/**
+ * Injected only on redraft cycles. The rejected draft stays visible so the
+ * model can avoid repeating the same wording; findings are directives, not
+ * soft suggestions.
+ */
+function buildFeedbackSection(history: DraftAttempt[]): string | null {
+  if (history.length === 0) return null;
+
+  const blocks = history.map((attempt) => {
+    const findings =
+      attempt.findings.length > 0
+        ? attempt.findings.map(formatFinding).join("\n")
+        : "- (no structured findings recorded — still produce a tighter rewrite)";
+
+    return `Attempt ${attempt.attempt} — rejected draft:
+"""
+${attempt.draft.suggestion}
+"""
+
+Findings to fix:
+${findings}`;
+  });
+
+  return `### REVISION REQUIRED
+A prior draft was rejected by the Refiner. Rewrite the comment so every finding below is resolved.
+
+Rules for the rewrite:
+- Treat each finding's instruction as mandatory.
+- Where an excerpt is quoted, that span (or its meaning) must not reappear in the same form.
+- Keep the strategic angle, the acknowledged point, and any answered questions unless a finding explicitly requires changing them.
+- Do not introduce new first-person claims of employers, metrics, or past projects that are not supported by COMMENTER IDENTITY / CONTEXT.
+- Return a full new comment, not a diff or commentary on the old one.
+
+${blocks.join("\n\n")}`;
+}
+
+function buildSystemPrompt(
+  analysis: AnalysisArtifact,
+  context?: UserContext,
+  feedbackHistory: DraftAttempt[] = [],
+): string {
   const commenterSection = context ? buildCommenterSection(context) : null;
   const voiceSection = context ? buildVoiceSection(context) : null;
   const substanceSection = context ? buildSubstanceSection(context) : null;
   const guardrailsSection = context ? buildGuardrailsSection(context) : null;
   const tradeoffsSection = buildTradeoffsSection(analysis);
+  const feedbackSection = buildFeedbackSection(feedbackHistory);
+  const isRevision = feedbackHistory.length > 0;
 
   const sections = [
-    `You are the "Drafter" node in an AI comment-drafting workflow. Write a single LinkedIn comment reply to the post below.
+    `You are the "Drafter" node in an AI comment-drafting workflow. ${
+      isRevision
+        ? "Rewrite a LinkedIn comment reply that was rejected — fix every Refiner finding while keeping the same strategic obligations."
+        : "Write a single LinkedIn comment reply to the post below."
+    }
 
 Your primary goal is to write an interactive, peer-level comment. Respond naturally to what the author wrote or asked without generic agreeableness or AI filler.`,
 
@@ -143,11 +203,15 @@ Your primary goal is to write an interactive, peer-level comment. Respond natura
 
     voiceSection ? `### VOICE CALIBRATION\nMatch this voice precisely. Do not sound like a generic assistant.\n${voiceSection}` : null,
 
+    feedbackSection,
+
     `### OUTPUT FORMAT
 Respond in exactly this format. Do not skip either section.
 
 **Suggestion:**
-[The single-draft LinkedIn comment applying the playbook and strategic angle above.]
+[The single-draft LinkedIn comment applying the playbook and strategic angle above${
+      isRevision ? ", with every Refiner finding resolved" : ""
+    }.]
 
 **Why:**
 [One sentence explaining how this specific angle builds authority and connections.]`,
@@ -202,8 +266,10 @@ export const drafterStep: Step = {
       throw new Error("drafter step requires state.analysis from a prior analyze step");
     }
 
+    const isRevision = state.feedbackHistory.length > 0;
+
     const raw = await deps.call({
-      system: buildSystemPrompt(state.analysis, state.context),
+      system: buildSystemPrompt(state.analysis, state.context, state.feedbackHistory),
       user: buildUserMessage(state),
       maxTokens: 400,
     });
@@ -214,6 +280,9 @@ export const drafterStep: Step = {
       "\n========== DRAFTER OUTPUT ==========\n" +
         JSON.stringify(
           {
+            attempt: state.attempts,
+            revision: isRevision,
+            feedbackCount: state.feedbackHistory.length,
             category: state.analysis.category,
             pivotStrategy: state.analysis.pivotStrategy,
             suggestedLength: state.analysis.responseParameters.suggestedLength,
@@ -231,7 +300,9 @@ export const drafterStep: Step = {
       record: {
         name: "draft",
         status: "completed",
-        summary: draft.suggestion.slice(0, 100),
+        summary: isRevision
+          ? `redraft #${state.attempts} · ${draft.suggestion.slice(0, 80)}`
+          : draft.suggestion.slice(0, 100),
         output: draft,
       },
     };
