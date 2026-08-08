@@ -1,14 +1,15 @@
-import type { LlmPrompt, Post, UserContext } from "./types";
+import type { LlmPrompt } from "../llm/types";
+import type { Post, UserContext } from "./types";
 
-function hasItems(items?: string[]): items is string[] {
+export function hasItems(items?: string[]): items is string[] {
   return Boolean(items?.length);
 }
 
-function formatBulletList(items: string[]): string {
+export function formatBulletList(items: string[]): string {
   return items.map((item) => `- ${item}`).join("\n");
 }
 
-function buildCommenterSection(context: UserContext): string {
+export function buildCommenterSection(context: UserContext): string {
   const lines = [
     "The commenter:",
     `- Niche: ${context.niche}`,
@@ -23,7 +24,7 @@ function buildCommenterSection(context: UserContext): string {
   return lines.join("\n");
 }
 
-function buildSubstanceSection(context: UserContext): string | null {
+export function buildSubstanceSection(context: UserContext): string | null {
   const sections: string[] = [];
 
   if (hasItems(context.proofPoints)) {
@@ -37,15 +38,15 @@ function buildSubstanceSection(context: UserContext): string | null {
   return sections.length > 0 ? sections.join("\n\n") : null;
 }
 
-function buildGuardrailsSection(context: UserContext): string | null {
+export function buildGuardrailsSection(context: UserContext): string | null {
   if (!hasItems(context.avoid)) {
     return null;
   }
 
-  return `Never use these phrases or patterns:\n${formatBulletList(context.avoid)}`;
+  return `Hard constraints on the comment text. Violating any of these is a failure:\n${formatBulletList(context.avoid)}`;
 }
 
-function buildVoiceSection(context: UserContext): string | null {
+export function buildVoiceSection(context: UserContext): string | null {
   const sections: string[] = [];
 
   if (hasItems(context.voiceSamples)) {

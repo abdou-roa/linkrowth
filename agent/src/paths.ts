@@ -5,8 +5,8 @@ function isAgentRoot(dir: string): boolean {
   // Dev layout has src/; Docker/production copies only dist/ + config/.
   return (
     existsSync(join(dir, "package.json")) &&
-    (existsSync(join(dir, "src", "engage.ts")) ||
-      existsSync(join(dir, "dist", "engage.js")))
+    (existsSync(join(dir, "src", "core", "engage.ts")) ||
+      existsSync(join(dir, "dist", "core", "engage.js")))
   );
 }
 

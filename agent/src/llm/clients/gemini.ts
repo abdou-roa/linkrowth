@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { getProviderConfig } from "../config/env";
+import { getProviderConfig } from "../../config/llm";
 import type { LlmRequest } from "../types";
 
 let ai: GoogleGenAI | null = null;

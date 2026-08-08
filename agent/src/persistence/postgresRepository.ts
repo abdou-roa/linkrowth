@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { getPool } from "../db/client";
+import { getPool } from "../config/db";
 import type { RunRecord, RunRepository } from "./types";
 
 class PostgresRunRepository implements RunRepository {

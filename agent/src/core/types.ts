@@ -1,5 +1,3 @@
-export type LlmProvider = "openai" | "gemini";
-
 /** Author fields aligned with helpers/schema.sql posts.author_* columns. */
 export interface PostAuthor {
   name?: string;
@@ -54,17 +52,4 @@ export interface EngageResult {
   voiceCheck?: string;
   suggestion: string;
   rationale: string;
-}
-
-export interface LlmRequest {
-  system: string;
-  user: string;
-  model?: string;
-  maxTokens?: number;
-  max_completion_tokens?: number;
-}
-
-export interface LlmPrompt {
-  system: string;
-  user: string;
 }

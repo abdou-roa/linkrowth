@@ -1,14 +1,5 @@
-import type { EngageResult, Post, UserContext } from "../types";
-
-export interface ReasoningStep {
-  name: string;
-  status: "completed" | "failed";
-  summary?: string;
-  output?: unknown;
-  error?: string;
-  startedAt: string;
-  completedAt: string;
-}
+import type { EngageResult, Post, UserContext } from "../core/types";
+import type { LlmCall, ReasoningStep } from "../steps/types";
 
 export interface AgentRunInput {
   post: Post;
@@ -21,6 +12,15 @@ export interface AgentRunResult {
   steps: ReasoningStep[];
 }
 
+/** Injected runtime deps for agents that compose LLM-backed steps. */
+export interface AgentDependencies {
+  call: LlmCall;
+}
+
+/**
+ * A named engagement pipeline. One-shot is a single-step agent; multi-step
+ * composes several steps. Selected by the registry and run by persistence.
+ */
 export interface Agent {
   readonly id: string;
   run(input: AgentRunInput): Promise<AgentRunResult>;

@@ -1,9 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { MULTI_STEP_ENGAGE_AGENT_ID } from "../agents/multiStepEngage";
 import { getAgent } from "../agents/registry";
-import { getAgentRoot } from "../paths";
-import type { Post, UserContext } from "../types";
+import { loadUserContext } from "../context/loadUserContext";
+import type { Post, UserContext } from "../core/types";
 import {
   claimSuggestionJob,
   failSuggestionJob,
@@ -12,21 +11,12 @@ import {
 import { createPostgresRunRepository } from "./postgresRepository";
 import type { RunRecord, RunRepository } from "./types";
 
-function loadUserContext(): UserContext {
-  const configPath = join(getAgentRoot(), "config", "user.json");
-  if (!existsSync(configPath)) {
-    throw new Error(
-      "Missing agent/config/user.json. Copy agent/config/user.example.json and fill in your identity, voice, and substance fields."
-    );
-  }
-
-  const raw = readFileSync(configPath, "utf-8");
-  return JSON.parse(raw) as UserContext;
-}
+export { MULTI_STEP_ENGAGE_AGENT_ID };
 
 export interface RunEngageOptions {
   context?: UserContext;
   repository?: RunRepository;
+  /** Which agent pipeline to run. Defaults to multi-step (override via agentId or LINKROWTH_AGENT). */
   agentId?: string;
   /** Existing suggestion_jobs row from the API. Skips claim when the caller already claimed it. */
   jobId?: string;
@@ -34,13 +24,20 @@ export interface RunEngageOptions {
   skipClaim?: boolean;
 }
 
+/**
+ * Persistence wrapper around the engage agents: resolve context, claim the job,
+ * run the selected agent, persist the run, and reconcile job status on failure.
+ * The agents and the pure core know nothing about any of this.
+ */
 export async function runEngage(
   post: Post,
   options: RunEngageOptions = {}
 ): Promise<RunRecord> {
   const context = options.context ?? loadUserContext();
   const repository = options.repository ?? createPostgresRunRepository();
-  const agent = getAgent(options.agentId);
+  const agent = getAgent(
+    options.agentId ?? process.env.LINKROWTH_AGENT ?? MULTI_STEP_ENGAGE_AGENT_ID
+  );
   const { jobId } = options;
 
   if (jobId && !options.skipClaim) {
@@ -53,17 +50,17 @@ export async function runEngage(
   const postId = post.id ?? randomUUID();
 
   try {
-    const agentResult = await agent.run({ post, context });
+    const { result, steps, agentId } = await agent.run({ post, context });
     const createdAt = new Date().toISOString();
 
     const record: RunRecord = {
       id: randomUUID(),
       jobId,
       postId,
-      agentId: agentResult.agentId,
+      agentId,
       post: { ...post, id: postId },
-      result: agentResult.result,
-      steps: agentResult.steps,
+      result,
+      steps,
       createdAt,
     };
 

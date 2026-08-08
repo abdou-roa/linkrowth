@@ -1,9 +1,5 @@
-import { config as loadDotenv } from "dotenv";
-import { resolve } from "node:path";
-import type { LlmProvider } from "../types";
-import { getAgentRoot } from "../paths";
-
-loadDotenv({ path: resolve(getAgentRoot(), ".env") });
+import type { LlmProvider } from "../llm/types";
+import { loadEnv } from "./loadEnv";
 
 export interface ProviderConfig {
   apiKey: string;
@@ -11,7 +7,7 @@ export interface ProviderConfig {
   apiKeyEnvVar: string;
 }
 
-interface EnvConfig {
+interface LlmEnvConfig {
   provider: LlmProvider;
   openai: ProviderConfig;
   gemini: ProviderConfig;
@@ -34,7 +30,7 @@ const MODEL_ENV_VARS: Record<LlmProvider, string> = {
   gemini: "LINKROWTH_GEMINI_MODEL",
 };
 
-let cached: EnvConfig | null = null;
+let cached: LlmEnvConfig | null = null;
 
 function readProvider(value: string | undefined): LlmProvider {
   const normalized = value?.trim().toLowerCase() ?? "openai";
@@ -57,8 +53,10 @@ function buildProviderConfig(provider: LlmProvider): ProviderConfig {
   };
 }
 
-function getEnv(): EnvConfig {
+function getEnv(): LlmEnvConfig {
   if (cached) return cached;
+
+  loadEnv();
 
   cached = {
     provider: readProvider(process.env.LINKROWTH_PROVIDER),
@@ -85,19 +83,4 @@ export function getActiveProviderConfig(): ProviderConfig & { provider: LlmProvi
   }
 
   return { provider: env.provider, ...config };
-}
-
-export function getDatabaseUrl(): string {
-  const url = process.env.DATABASE_URL?.trim();
-  if (!url) {
-    throw new Error(
-      "Missing DATABASE_URL. Start Postgres (`docker compose up -d postgres`), copy DATABASE_URL from .env.example into .env, then run `./helpers/migrate.sh`."
-    );
-  }
-  return url;
-}
-
-export function validateEnv(): void {
-  getActiveProviderConfig();
-  getDatabaseUrl();
 }
