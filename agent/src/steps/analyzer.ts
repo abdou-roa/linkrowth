@@ -3,12 +3,15 @@
   import type {
     AnalysisArtifact,
     AuthorSeniority,
+    PostQuestion,
     PostTone,
+    QuestionReplyDecision,
     SuggestedLength,
     TechnicalDepth,
   } from "./types";
   import type { Step, StepResult } from "./types";
   import type { EngageState, StepDeps } from "./types";
+  import { answerableQuestions } from "./types";
 
   // ---------------------------------------------------------------------------
   // Prompt
@@ -60,9 +63,18 @@
   - "isTechnical": true when the headline indicates an engineering, product-engineering, data/ML, or other hands-on technical role. false for founders/execs without a technical signal, recruiters, marketers, sales, HR, coaches, or when the headline is missing/ambiguous.
   - "seniority": "founder" for founder/co-founder/CEO titles, "leadership" for VP/Director/Head-of/Manager titles, "ic" for individual-contributor titles (engineer, designer, analyst, specialist, etc.), "unknown" when the headline is missing or ambiguous.
 
-  DIRECT QUESTION RULES:
-  - Set "postQuestion" to the exact (or lightly paraphrased) question if the post explicitly asks readers a direct question.
-  - Set it to null if the post makes no direct ask of its readers.
+  QUESTION EXTRACTION RULES:
+  - Extract EVERY question in the post into "postQuestions" — not just the closing CTA. Include:
+    - Sentences ending in "?"
+    - Clear interrogative asks without "?", e.g. "Curious how others handle this.", "Wondering if anyone has shipped this."
+  - Lightly paraphrase only when needed for clarity; prefer the author's wording.
+  - If the post contains no questions, return an empty array [].
+
+  For each extracted question, set "decision" and a one-line "reason":
+  - "answer": a genuine invitation for readers to respond — a direct audience ask, open call for opinions/experience, or CTA question the author expects replies to.
+  - "omit": not worth answering in a comment — rhetorical devices, stylistic hooks, questions the author immediately answers themselves, self-directed musings, asks aimed at a named person/company, or hypothetical framing that isn't seeking a reply.
+
+  Bias toward "omit" when unsure. A LinkedIn comment should answer at most the real reader asks; do not treat every "?" as an obligation.
 
   UNSPOKEN TRADE-OFFS RULES:
   - Only populate this array when the category is "technical".
@@ -93,16 +105,16 @@
 
   - "suggestedLength" (decide second — base this STRICTLY on how technically deep "insightDirection" is, i.e. how much the drafter must unpack):
     Do NOT base this on the original post's length, word count, or how technical the post itself is. A highly technical post can still warrant a short comment if the insightDirection is a single sharp point; a simpler post can warrant more room if the insightDirection must unpack a real trade-off.
-    Also weigh "unspokenTradeoffs" and "postQuestion" only insofar as they deepen what insightDirection must cover.
+    Also weigh "unspokenTradeoffs" and any postQuestions with decision "answer" only insofar as they deepen what insightDirection must cover.
     When in doubt between two lengths, always choose the shorter one. Brevity signals seniority.
 
     Length scale (driven by insightDirection depth):
     - "short": the insightDirection is a single straightforward point, recognition, or observation — one beat, no setup required.
-    - "standard": the insightDirection needs a brief setup plus the pivot (e.g. one operational nuance, or answering a "postQuestion" alongside the acknowledgment).
-    - "extended": ONLY when category is "technical" AND technicalDepth is "high" AND the insightDirection unpacks a real architectural / systems trade-off (typically with populated unspokenTradeoffs) AND you must also answer a specific "postQuestion".
+    - "standard": the insightDirection needs a brief setup plus the pivot (e.g. one operational nuance, or answering an answerable postQuestion alongside the acknowledgment).
+    - "extended": ONLY when category is "technical" AND technicalDepth is "high" AND the insightDirection unpacks a real architectural / systems trade-off (typically with populated unspokenTradeoffs) AND you must also answer at least one postQuestion marked "answer".
 
     Category caps:
-    - "achievement" / "informal": default "short"; bump to "standard" only when insightDirection genuinely needs two beats or there is a "postQuestion". Never "extended".
+    - "achievement" / "informal": default "short"; bump to "standard" only when insightDirection genuinely needs two beats or there is an answerable postQuestion. Never "extended".
     - "technical" + technicalDepth "accessible": same scale as above but never "extended" — accessible insights stay at "short" or "standard".
 
   OUTPUT FORMAT:
@@ -116,7 +128,13 @@
       "isTechnical": true,
       "seniority": "ic | leadership | founder | unknown"
     },
-    "postQuestion": "<exact or paraphrased question, or null>",
+    "postQuestions": [
+      {
+        "text": "<exact or paraphrased question>",
+        "decision": "answer | omit",
+        "reason": "<one-line rationale>"
+      }
+    ],
     "unspokenTradeoffs": [
       "<concept from the post bridged to the user's specific niche>"
     ],
@@ -151,6 +169,33 @@
 
   const VALID_LENGTHS: SuggestedLength[] = ["short", "standard", "extended"];
   const VALID_DEPTHS: TechnicalDepth[] = ["high", "accessible"];
+  const VALID_QUESTION_DECISIONS: QuestionReplyDecision[] = ["answer", "omit"];
+
+  function parsePostQuestions(raw: unknown): PostQuestion[] {
+    if (!Array.isArray(raw)) return [];
+
+    return raw.reduce<PostQuestion[]>((questions, entry) => {
+      const candidate = entry as Partial<PostQuestion>;
+      const text = typeof candidate?.text === "string" ? candidate.text.trim() : "";
+      if (!text) return questions;
+
+      const decision = VALID_QUESTION_DECISIONS.includes(
+        candidate.decision as QuestionReplyDecision,
+      )
+        ? (candidate.decision as QuestionReplyDecision)
+        : "omit";
+
+      const reason =
+        typeof candidate.reason === "string" && candidate.reason.trim()
+          ? candidate.reason.trim()
+          : decision === "answer"
+            ? "Classified as a genuine reader ask."
+            : "Classified as not requiring a reply.";
+
+      questions.push({ text, decision, reason });
+      return questions;
+    }, []);
+  }
 
   function parseAnalysis(raw: string): AnalysisArtifact {
     const json = extractJsonBlock(raw);
@@ -175,11 +220,8 @@
     // Normalise: fall back to "neutral" for unrecognised/missing tone
     parsed.tone = VALID_TONES.includes(parsed.tone) ? parsed.tone : "neutral";
 
-    // Normalise: guarantee postQuestion is either a non-empty string or null
-    parsed.postQuestion =
-      typeof parsed.postQuestion === "string" && parsed.postQuestion.trim()
-        ? parsed.postQuestion.trim()
-        : null;
+    // Normalise: extract + classify every question; default unknown decisions to omit
+    parsed.postQuestions = parsePostQuestions(parsed.postQuestions);
 
     // Depth first: "high" requires a technical category AND a technical author,
     // regardless of what the model returned.
@@ -201,7 +243,7 @@
 
     // A "short" budget can't hold an acknowledgment, an injected insight, and an
     // answer to a direct question — the answer is what gets dropped. Floor it.
-    if (parsed.postQuestion && suggestedLength === "short") {
+    if (answerableQuestions(parsed).length > 0 && suggestedLength === "short") {
       suggestedLength = "standard";
     }
 

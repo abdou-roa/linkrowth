@@ -8,6 +8,7 @@ import type { UserContext } from "../core/types";
 import type { AnalysisArtifact, DraftArtifact, PostCategory, SuggestedLength } from "./types";
 import type { Step, StepResult } from "./types";
 import type { EngageState, StepDeps } from "./types";
+import { answerableQuestions } from "./types";
 
 // ---------------------------------------------------------------------------
 // Prompt
@@ -54,8 +55,13 @@ function buildRiskSection(analysis: AnalysisArtifact): string | null {
 }
 
 function buildQuestionSection(analysis: AnalysisArtifact): string | null {
-  if (!analysis.postQuestion) return null;
-  return `The author explicitly asked readers: "${analysis.postQuestion}"\nYour comment must directly answer or meaningfully reframe this question.`;
+  const toAnswer = answerableQuestions(analysis);
+  if (toAnswer.length === 0) return null;
+
+  const listed = toAnswer.map((q) => `- "${q.text}"`).join("\n");
+  const plural = toAnswer.length > 1;
+
+  return `The author asked readers the following question${plural ? "s" : ""} (classified as worth answering):\n${listed}\nYour comment must directly answer or meaningfully reframe ${plural ? "these questions in one coherent reply — do not write a Q&A list" : "this question"}.`;
 }
 
 function buildStrategySection(analysis: AnalysisArtifact): string {

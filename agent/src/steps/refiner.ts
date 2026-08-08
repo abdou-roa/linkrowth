@@ -11,6 +11,7 @@ import type {
 } from "./types";
 import type { Step, StepResult } from "./types";
 import type { EngageState, StepDeps } from "./types";
+import { answerableQuestions } from "./types";
 
 // ---------------------------------------------------------------------------
 // Deterministic length check
@@ -47,9 +48,10 @@ function checkLength(
 
   // Naming what must survive the cut, because the acknowledgment and the
   // question answer are the first things a redraft tends to drop.
-  const mustKeep = analysis.postQuestion
-    ? "the acknowledged point, the injected insight, or the answer to the author's question"
-    : "the acknowledged point or the injected insight";
+  const mustKeep =
+    answerableQuestions(analysis).length > 0
+      ? "the acknowledged point, the injected insight, or the answer to the author's question"
+      : "the acknowledged point or the injected insight";
 
   return {
     dimension: "length",
@@ -100,11 +102,16 @@ function buildAnalysisSection(analysis: AnalysisArtifact): string {
     `- Author's register: ${analysis.tone}`,
   ];
 
-  lines.push(
-    analysis.postQuestion
-      ? `- The author directly asked readers: "${analysis.postQuestion}"`
-      : "- The author asked readers no direct question."
-  );
+  const toAnswer = answerableQuestions(analysis);
+  if (toAnswer.length > 0) {
+    lines.push(
+      `- Questions the draft must answer or reframe:\n${toAnswer
+        .map((q) => `  - "${q.text}"`)
+        .join("\n")}`,
+    );
+  } else {
+    lines.push("- No questions classified as worth answering.");
+  }
 
   if (analysis.riskFlags.length > 0) {
     lines.push(`- Sensitive topics present: ${analysis.riskFlags.join(", ")}`);
@@ -145,7 +152,7 @@ Calibration examples:
 
     `### ADVISORY DIMENSIONS — recorded for human review, never blocking
 - "strategyFidelity": the draft does not carry the insight it was told to inject, or acknowledges the post without adding anything of its own.
-- "questionObligation": the author asked a direct question and the draft neither answers nor meaningfully reframes it.
+- "questionObligation": one or more questions were classified as worth answering and the draft neither answers nor meaningfully reframes them.
 - "nicheSignature": nothing in the draft could only have been written by someone in this commenter's niche — it would read identically from any commenter.
 - "riskHandling": a sensitive topic is present and the draft's register is careless given that.
 - "voiceMatch": cadence or register drifts from the commenter's voice samples.`,

@@ -52,6 +52,19 @@ export interface PivotStrategy {
 export type SuggestedLength = "short" | "standard" | "extended";
 export type TechnicalDepth = "high" | "accessible";
 
+/** Whether the drafter should address this extracted question. */
+export type QuestionReplyDecision = "answer" | "omit";
+
+/** A question found in the post, with a reply/omit classification. */
+export interface PostQuestion {
+  /** Exact or lightly paraphrased question text from the post. */
+  text: string;
+  /** "answer" = genuine reader ask the comment should address; "omit" = rhetorical/stylistic/etc. */
+  decision: QuestionReplyDecision;
+  /** One-line rationale for the decision. */
+  reason: string;
+}
+
 /** Vocabulary register first; comment budget follows how deep the insight must go. */
 export interface ResponseParameters {
   technicalDepth: TechnicalDepth;
@@ -64,14 +77,19 @@ export interface AnalysisArtifact {
   coreThesis: string;
   tone: PostTone;
   authorProfile: AuthorProfile;
-  /** The exact question posed to readers, if the post asks one directly. */
-  postQuestion: string | null;
+  /** Every question found in the post, each classified as answer or omit. Empty when none. */
+  postQuestions: PostQuestion[];
   /** Empty array for non-technical posts. */
   unspokenTradeoffs: string[];
   /** Sensitive topics (layoffs, grief, competitor bashing, politics, etc.) to handle carefully. Empty when none. */
   riskFlags: string[];
   pivotStrategy: PivotStrategy;
   responseParameters: ResponseParameters;
+}
+
+/** Questions the drafter is obligated to address. */
+export function answerableQuestions(analysis: AnalysisArtifact): PostQuestion[] {
+  return analysis.postQuestions.filter((q) => q.decision === "answer");
 }
 
 /** Drafter / refiner output: the candidate comment. */
