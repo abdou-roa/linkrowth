@@ -52,10 +52,10 @@ export interface PivotStrategy {
 export type SuggestedLength = "short" | "standard" | "extended";
 export type TechnicalDepth = "high" | "accessible";
 
-/** Tells the Drafter how much to write and at what vocabulary level. */
+/** Vocabulary register first; comment budget follows how deep the insight must go. */
 export interface ResponseParameters {
-  suggestedLength: SuggestedLength;
   technicalDepth: TechnicalDepth;
+  suggestedLength: SuggestedLength;
 }
 
 /** Analyzer output: structural analysis of the post before any drafting. */

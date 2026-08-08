@@ -85,14 +85,25 @@
   - CRITICAL ESCAPE HATCH: If the post is entirely outside the niche stated in USER DOMAIN CONTEXT above, DO NOT force a connection. Instead, set "insightDirection" to a thoughtful instruction focused purely on the original author's thesis.
 
   RESPONSE PARAMETERS RULES:
-  - "suggestedLength": Base this STRICTLY on the complexity of the "insightDirection" and the "unspokenTradeoffs", NEVER on the length of the original post. A 500-word post often only deserves a 1-sentence observation.
-    - "short": The "insightDirection" is a straightforward point, a simple pivot, or a quick informal observation. This should be your default for 80% of all posts (especially "achievement" and "informal").
-    - "standard": The "insightDirection" involves a specific operational nuance or you have populated "unspokenTradeoffs". It requires exactly one sentence of technical setup and one sentence to deliver the pivot.
-    - "extended": ONLY use this if the category is "technical" AND you are unpacking a complex architectural trade-off AND you must answer a specific "postQuestion".
-    - CRITICAL RULE: When in doubt between two lengths, always choose the shorter one. Brevity signals seniority. Over-explaining signals a junior trying to prove themselves.
-  - "technicalDepth":
+  Decide these in order: technicalDepth first (vocabulary register), then suggestedLength from how deep the insightDirection itself needs to go.
+
+  - "technicalDepth" (decide first — audience register, NOT comment length):
     - "high" ONLY when category is "technical" AND authorProfile.isTechnical is true — signals the drafter to use precise, low-level engineering terminology.
     - "accessible" for founders, non-technical authors, or achievement/informal posts — signals the drafter to stick to high-level business/operational realities without code-level jargon.
+
+  - "suggestedLength" (decide second — base this STRICTLY on how technically deep "insightDirection" is, i.e. how much the drafter must unpack):
+    Do NOT base this on the original post's length, word count, or how technical the post itself is. A highly technical post can still warrant a short comment if the insightDirection is a single sharp point; a simpler post can warrant more room if the insightDirection must unpack a real trade-off.
+    Also weigh "unspokenTradeoffs" and "postQuestion" only insofar as they deepen what insightDirection must cover.
+    When in doubt between two lengths, always choose the shorter one. Brevity signals seniority.
+
+    Length scale (driven by insightDirection depth):
+    - "short": the insightDirection is a single straightforward point, recognition, or observation — one beat, no setup required.
+    - "standard": the insightDirection needs a brief setup plus the pivot (e.g. one operational nuance, or answering a "postQuestion" alongside the acknowledgment).
+    - "extended": ONLY when category is "technical" AND technicalDepth is "high" AND the insightDirection unpacks a real architectural / systems trade-off (typically with populated unspokenTradeoffs) AND you must also answer a specific "postQuestion".
+
+    Category caps:
+    - "achievement" / "informal": default "short"; bump to "standard" only when insightDirection genuinely needs two beats or there is a "postQuestion". Never "extended".
+    - "technical" + technicalDepth "accessible": same scale as above but never "extended" — accessible insights stay at "short" or "standard".
 
   OUTPUT FORMAT:
   Return only the JSON object. No markdown fences, no explanation.
@@ -117,8 +128,8 @@
       "insightDirection": "<direct command telling the drafter what argument/stance to inject>"
     },
     "responseParameters": {
-      "suggestedLength": "short | standard | extended",
-      "technicalDepth": "high | accessible"
+      "technicalDepth": "high | accessible",
+      "suggestedLength": "short | standard | extended"
     }
   }`;
   }
@@ -170,29 +181,40 @@
         ? parsed.postQuestion.trim()
         : null;
 
-    // Normalise: fall back to safe defaults for unrecognised response parameters
-    const requestedLength = VALID_LENGTHS.includes(parsed.responseParameters?.suggestedLength)
+    // Depth first: "high" requires a technical category AND a technical author,
+    // regardless of what the model returned.
+    const requestedDepth = VALID_DEPTHS.includes(parsed.responseParameters?.technicalDepth)
+      ? parsed.responseParameters.technicalDepth
+      : "accessible";
+    const technicalDepth =
+      requestedDepth === "high" &&
+      parsed.category === "technical" &&
+      parsed.authorProfile.isTechnical
+        ? "high"
+        : "accessible";
+
+    let suggestedLength: SuggestedLength = VALID_LENGTHS.includes(
+      parsed.responseParameters?.suggestedLength,
+    )
       ? parsed.responseParameters.suggestedLength
       : "standard";
 
     // A "short" budget can't hold an acknowledgment, an injected insight, and an
     // answer to a direct question — the answer is what gets dropped. Floor it.
-    const suggestedLength =
-      parsed.postQuestion && requestedLength === "short" ? "standard" : requestedLength;
-    const technicalDepth = VALID_DEPTHS.includes(parsed.responseParameters?.technicalDepth)
-      ? parsed.responseParameters.technicalDepth
-      : "accessible";
+    if (parsed.postQuestion && suggestedLength === "short") {
+      suggestedLength = "standard";
+    }
 
-    // Enforce the deterministic gate ourselves: "high" depth requires a technical
-    // category AND a technical author, regardless of what the model returned.
+    // Cap length: extended is reserved for high-depth technical insights only.
+    if (parsed.category === "achievement" || parsed.category === "informal") {
+      if (suggestedLength === "extended") suggestedLength = "standard";
+    } else if (parsed.category === "technical" && technicalDepth === "accessible") {
+      if (suggestedLength === "extended") suggestedLength = "standard";
+    }
+
     parsed.responseParameters = {
+      technicalDepth,
       suggestedLength,
-      technicalDepth:
-        technicalDepth === "high" &&
-        parsed.category === "technical" &&
-        parsed.authorProfile.isTechnical
-          ? "high"
-          : "accessible",
     };
 
     return parsed;
@@ -238,7 +260,7 @@
         record: {
           name: "analyze",
           status: "completed",
-          summary: `${analysis.category} · ${analysis.tone} · ${analysis.authorProfile.isTechnical ? "technical author" : "non-technical author"} · ${analysis.responseParameters.suggestedLength}/${analysis.responseParameters.technicalDepth} · ${analysis.coreThesis.slice(0, 80)}`,
+          summary: `${analysis.category} · ${analysis.tone} · ${analysis.authorProfile.isTechnical ? "technical author" : "non-technical author"} · ${analysis.responseParameters.technicalDepth}/${analysis.responseParameters.suggestedLength} · ${analysis.coreThesis.slice(0, 80)}`,
           output: analysis,
         },
       };
