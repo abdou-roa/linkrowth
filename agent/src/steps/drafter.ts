@@ -59,10 +59,10 @@ function buildQuestionSection(analysis: AnalysisArtifact): string | null {
 }
 
 function buildStrategySection(analysis: AnalysisArtifact): string {
-  return `Your comment must express this angle:
+  return `Your comment must execute this strategic angle:
 - Acknowledged point: "${analysis.pivotStrategy.acknowledgedPoint}"
-- Core Domain Concept to Bridge: "${analysis.pivotStrategy.identifiedBridge}"
-  (CRITICAL INSTRUCTION: Use this core concept as the foundation of your insight. Do not just repeat the concept — use your engineering knowledge and playbook rules to write a natural, high-level observation about it).`;
+- Insight direction (mandatory): "${analysis.pivotStrategy.insightDirection}"
+  (CRITICAL INSTRUCTION: This is a command telling you WHAT argument to make — not final comment prose. Turn it into natural comment voice that matches the playbook, length, and calibration above. Do NOT invent a different angle. Do NOT copy the command wording verbatim.)`;
 }
 
 function buildCalibrationSection(analysis: AnalysisArtifact): string {
@@ -88,7 +88,7 @@ function buildSystemPrompt(analysis: AnalysisArtifact, context?: UserContext): s
   const sections = [
     `You are the "Drafter" node in an AI comment-drafting workflow. Write a single LinkedIn comment reply to the post below.
 
-Your primary goal is to avoid generic agreeableness. You must signal real expertise and add distinct value to the conversation — never just validate.`,
+Your primary goal is to avoid generic agreeableness. Reflect the analyzer's insight direction into natural comment prose that signals real expertise — never invent a different angle, and never just validate.`,
 
     commenterSection ? `### COMMENTER IDENTITY\n${commenterSection}` : null,
 

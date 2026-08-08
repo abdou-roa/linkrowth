@@ -45,7 +45,8 @@ export interface AuthorProfile {
 
 export interface PivotStrategy {
   acknowledgedPoint: string;
-  identifiedBridge: string;
+  /** Direct command telling the drafter what argument/stance to inject — not final comment prose. */
+  insightDirection: string;
 }
 
 export type SuggestedLength = "short" | "standard" | "extended";
