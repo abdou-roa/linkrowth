@@ -87,15 +87,20 @@
   - Flag sensitive topics that require careful handling in "riskFlags": e.g. "layoffs", "personal-loss", "competitor-criticism", "political", "controversial-opinion".
   - Set it to an empty array [] when the post is safe, ordinary professional content.
 
-  PIVOT STRATEGY RULES:
-  - "acknowledgedPoint": the single strongest claim or detail from the post worth referencing — pull an exact detail (a number, a named tool, a decision, a phrase), not a summary of the post's vibe.
-  - "insightDirection": The specific engineering argument, reality, or question the drafter must inject. Write this as a direct command to the drafter, NOT as the final comment prose.
-    - BAD (Micromanaging): "I completely agree, when we built this, Redis latency was an issue."
-    - BAD (Too abstract): "redis-latency-limits"
-    - GOOD (Clear Direction): "Point out that Redis latency limits will eventually bottleneck this architecture at scale."
-    - GOOD (Clear Direction): "Argue that the async context-switching tax outweighs the focus benefits they mentioned."
-  - CRITICAL ESCAPE HATCH: If the post is entirely outside the niche stated in USER DOMAIN CONTEXT above, DO NOT force a connection. Instead, set "insightDirection" to a thoughtful instruction focused purely on the original author's thesis.
+  CORE THESIS RULES:
+  - "coreThesis" is a top-level field, not part of "pivotStrategy".
+  - Faithfully summarize the author's main point, argument, or update in 1–3 sentences, using additional sentences only when needed to preserve important nuance in a deep post.
+  - Preserve the author's actual stance and subject. Do not replace it with a supporting detail, question, inferred motivation, or the commenter's perspective.
 
+  PIVOT STRATEGY RULES:
+  - "acknowledgedPoint": The single strongest specific detail from the post worth referencing (a number, named tool, specific tradeoff, or quote).
+  - "insightDirection": The specific command guiding what the drafter must execute.
+    - IF POST HAS QUESTIONS: "insightDirection" MUST be an explicit command on HOW to answer or reframe the author's primary question using the user's technical perspective.
+      - Example: "Answer their question about scale limits by pointing out that connection-pooling will fail before memory does."
+    - IF NO QUESTIONS: Focus on an additive pivot or operational edge case.
+      - Example: "Point out that Redis latency limits will eventually bottleneck this architecture at scale."
+  - CRITICAL ESCAPE HATCH: If the post is outside USER DOMAIN CONTEXT, set "insightDirection" to a thoughtful response focused purely on the author's thesis and question.
+  
   RESPONSE PARAMETERS RULES:
   Decide these in order: technicalDepth first (vocabulary register), then suggestedLength from how deep the insightDirection itself needs to go.
 
@@ -122,7 +127,7 @@
 
   {
     "category": "technical | achievement | informal",
-    "coreThesis": "<1–2 sentence summary of the author's main point>",
+    "coreThesis": "<accurate 1–3 sentence summary of the author's main point>",
     "tone": "celebratory | reflective | frustrated | analytical | provocative | neutral",
     "authorProfile": {
       "isTechnical": true,
@@ -199,7 +204,22 @@
 
   function parseAnalysis(raw: string): AnalysisArtifact {
     const json = extractJsonBlock(raw);
-    const parsed = JSON.parse(json) as AnalysisArtifact;
+    const parsed = JSON.parse(json) as AnalysisArtifact & {
+      pivotStrategy?: AnalysisArtifact["pivotStrategy"] & { coreThesis?: unknown };
+    };
+
+    // Keep coreThesis at the top-level contract. Accept the old nested shape so
+    // an occasional stale/model response still reaches the drafter correctly.
+    const topLevelCoreThesis =
+      typeof parsed.coreThesis === "string" ? parsed.coreThesis.trim() : "";
+    const nestedCoreThesis =
+      typeof parsed.pivotStrategy?.coreThesis === "string"
+        ? parsed.pivotStrategy.coreThesis.trim()
+        : "";
+    parsed.coreThesis = topLevelCoreThesis || nestedCoreThesis;
+    if (!parsed.coreThesis) {
+      throw new Error("Could not parse analyzer response — missing a non-empty coreThesis.");
+    }
 
     // Normalise: guarantee array fields are always arrays
     if (!Array.isArray(parsed.unspokenTradeoffs)) {

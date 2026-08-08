@@ -20,13 +20,18 @@ import { answerableQuestions } from "./types";
  */
 const PLAYBOOKS: Record<PostCategory, string> = {
   technical: `PLAYBOOK — TECHNICAL / DEEP-DIVE POST
-Analyze the technology mechanically. Do NOT invent personal work history, fake metrics, or past employers (e.g., never say "When I scaled a system..."). Ground your authority in execution realities. Use framing like "A frequent edge case here is..." or "From an architectural standpoint, the trade-off usually shifts to..."`,
+Analyze the technology mechanically. Ground your authority in execution realities. 
+- If the post asks a technical question, answer it directly with realistic operational trade-offs ("In production, the primary friction point usually becomes...").
+- Do NOT invent personal work history or fake metrics (never say "When I scaled a system...").`,
 
   achievement: `PLAYBOOK — ACHIEVEMENT / MILESTONE POST
-Acknowledge the win concisely without being overly sycophantic. Do not use excessive exclamation points. Then either name a specific, non-obvious thing that makes the milestone impressive, or — if it adds genuine value — ask one high-level, forward-looking question. Do not ask a question just to fill the slot.`,
+Acknowledge the win concisely without being sycophantic or using excessive exclamation points.
+- If the author asks a question about their milestone/next steps, answer it concisely.
+- Otherwise, highlight a non-obvious aspect that makes the milestone impressive or ask one high-level, forward-looking peer question.`,
 
   informal: `PLAYBOOK — INFORMAL / CULTURE / OPINION POST
-Validate the human element or core observation, then tie it back to the realities of being a technical professional without being pedantic. Keep it conversational and grounded.`,
+- If a question is asked, respond directly as a peer sharing practical industry perspective.
+- Validate the human element or core observation, keeping it conversational, grounded, and non-pedantic.`,
 };
 
 const LENGTH_GUIDANCE: Record<SuggestedLength, string> = {
@@ -43,7 +48,7 @@ function buildTradeoffsSection(analysis: AnalysisArtifact): string {
   }
 
   if (analysis.category === "technical") {
-    return "No unspoken trade-off was found bridging this post to the user's niche — do not force one. Lean fully on the strategic angle below instead.";
+    return "No unspoken trade-off was found bridging this post to the user's niche — do not force one. Lean fully on answering the question or executing the strategic angle below.";
   }
 
   return "";
@@ -54,28 +59,45 @@ function buildRiskSection(analysis: AnalysisArtifact): string | null {
   return `SENSITIVE TOPICS PRESENT: ${analysis.riskFlags.join(", ")}. Handle these with care and appropriate tact — use your judgment on what tone is safe here.`;
 }
 
-function buildQuestionSection(analysis: AnalysisArtifact): string | null {
-  const toAnswer = answerableQuestions(analysis);
-  if (toAnswer.length === 0) return null;
-
-  const listed = toAnswer.map((q) => `- "${q.text}"`).join("\n");
-  const plural = toAnswer.length > 1;
-
-  return `The author asked readers the following question${plural ? "s" : ""} (classified as worth answering):\n${listed}\nYour comment must directly answer or meaningfully reframe ${plural ? "these questions in one coherent reply — do not write a Q&A list" : "this question"}.`;
-}
-
+/**
+ * Unified Strategy & Interaction Section
+ * Combines Core Thesis, Acknowledged Point, Extracted Questions, and Strategic Direction.
+ */
 function buildStrategySection(analysis: AnalysisArtifact): string {
-  return `Your comment must execute this strategic angle:
-- Acknowledged point: "${analysis.pivotStrategy.acknowledgedPoint}"
-- Insight direction (mandatory): "${analysis.pivotStrategy.insightDirection}"
-  (CRITICAL INSTRUCTION: This is a command telling you WHAT argument to make — not final comment prose. Turn it into natural comment voice that matches the playbook, length, and calibration above. Do NOT invent a different angle. Do NOT copy the command wording verbatim.)`;
+  const toAnswer = answerableQuestions(analysis);
+  const questionsPresent = toAnswer.length > 0;
+
+  const lines: string[] = [];
+
+  if (analysis.coreThesis) {
+    lines.push(`- Author's Core Thesis: "${analysis.coreThesis}"`);
+  }
+
+  lines.push(`- Specific Detail to Reference: "${analysis.pivotStrategy.acknowledgedPoint}"`);
+
+  if (questionsPresent) {
+    const formattedQuestions = toAnswer.map((q) => `"${q.text}"`).join("; ");
+    lines.push(`- Author's Question(s) to Answer: ${formattedQuestions}`);
+    lines.push(
+      `- MANDATORY INTERACTION: Your draft MUST directly answer or reframe the author's question(s). Do NOT ignore the question.`
+    );
+  }
+
+  lines.push(
+    `- Insight Direction (How to answer/pivot): "${analysis.pivotStrategy.insightDirection}"`
+  );
+  lines.push(
+    `  (INSTRUCTION: Execute this direction into natural comment prose. Do NOT copy command wording verbatim or sound like an assistant answering a prompt.)`
+  );
+
+  return lines.join("\n");
 }
 
 function buildCalibrationSection(analysis: AnalysisArtifact): string {
   const { authorProfile, tone, responseParameters } = analysis;
 
   return `CALIBRATION:
-- Author: a "${authorProfile.seniority}" ${authorProfile.isTechnical ? "technical" : "non-technical"} professional, writing in a "${tone}" register — calibrate your acknowledgment to that emotional register without breaking the guardrails below.
+- Author: a "${authorProfile.seniority}" ${authorProfile.isTechnical ? "technical" : "non-technical"} professional, writing in a "${tone}" register — calibrate your tone to match this register naturally.
 - Length: exactly ${LENGTH_GUIDANCE[responseParameters.suggestedLength]}.
 - Vocabulary: ${
     responseParameters.technicalDepth === "high"
@@ -94,7 +116,7 @@ function buildSystemPrompt(analysis: AnalysisArtifact, context?: UserContext): s
   const sections = [
     `You are the "Drafter" node in an AI comment-drafting workflow. Write a single LinkedIn comment reply to the post below.
 
-Your primary goal is to avoid generic agreeableness. Reflect the analyzer's insight direction into natural comment prose that signals real expertise — never invent a different angle, and never just validate.`,
+Your primary goal is to write an interactive, peer-level comment. Respond naturally to what the author wrote or asked without generic agreeableness or AI filler.`,
 
     commenterSection ? `### COMMENTER IDENTITY\n${commenterSection}` : null,
 
@@ -104,18 +126,16 @@ Your primary goal is to avoid generic agreeableness. Reflect the analyzer's insi
 
     tradeoffsSection ? `### UNSPOKEN TRADE-OFFS\n${tradeoffsSection}` : null,
 
-    `### STRATEGIC ANGLE\n${buildStrategySection(analysis)}`,
-
-    buildQuestionSection(analysis),
+    `### STRATEGIC ANGLE & INTERACTION\n${buildStrategySection(analysis)}`,
 
     buildRiskSection(analysis),
 
     `### CRITICAL GUARDRAILS (THE ANTI-AI FILTER)
 - NEVER start with generic praise ("Insightful share," "Great breakdown," "I completely agree," "Congratulations!").
 - Enter the conversation at a peer level immediately.
-- Do not use generic AI buzzwords or emojis unless explicitly instructed in the voice calibration.
-- Do NOT default to ending every comment with a question. Never tack on a generic question ("What's your take?", "How are you approaching this?") just to manufacture engagement. If a question doesn't add real value, end on a confident statement instead.
-- Obey every item in AVOID below in the Suggestion text. These come from the commenter's style profile and are non-negotiable.`,
+- If the post asks a question, answer it directly. Do NOT default to asking a counter-question unless it naturally deepens the discussion.
+- Never tack on a generic ending question ("What's your take?", "How are you approaching this?") just to manufacture engagement.
+- Obey every item in AVOID below in the Suggestion text.`,
 
     guardrailsSection ? `### AVOID\n${guardrailsSection}` : null,
 
