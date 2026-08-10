@@ -1,3 +1,4 @@
+import { getStepModel } from "../config/llm";
 import {
   buildCommenterSection,
   buildGuardrailsSection,
@@ -269,6 +270,7 @@ export const drafterStep: Step = {
     const isRevision = state.feedbackHistory.length > 0;
 
     const raw = await deps.call({
+      model: getStepModel("draft"),
       system: buildSystemPrompt(state.analysis, state.context, state.feedbackHistory),
       user: buildUserMessage(state),
       maxTokens: 400,

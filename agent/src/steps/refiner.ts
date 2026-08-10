@@ -1,3 +1,4 @@
+import { getStepModel } from "../config/llm";
 import { extractJsonBlock } from "../core/parse";
 import { buildVoiceSection, formatBulletList, hasItems } from "../core/prompt";
 import type { UserContext } from "../core/types";
@@ -257,6 +258,7 @@ export const refinerStep: Step = {
     }
 
     const raw = await deps.call({
+      model: getStepModel("refine"),
       system: buildSystemPrompt(analysis, state.context),
       user: buildUserMessage(state, draft),
       maxTokens: 600,

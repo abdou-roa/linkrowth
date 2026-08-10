@@ -4,8 +4,13 @@ import { loadEnv } from "./loadEnv";
 export interface ProviderConfig {
   apiKey: string;
   defaultModel: string;
+  /** Stronger model for comment drafting; falls back to defaultModel when unset. */
+  draftModel: string;
   apiKeyEnvVar: string;
 }
+
+/** Multi-step roles that can select a model. Analyzer and refiner share the default. */
+export type EngageLlmStep = "analyze" | "draft" | "refine";
 
 interface LlmEnvConfig {
   provider: LlmProvider;
@@ -30,6 +35,11 @@ const MODEL_ENV_VARS: Record<LlmProvider, string> = {
   gemini: "LINKROWTH_GEMINI_MODEL",
 };
 
+const DRAFT_MODEL_ENV_VARS: Record<LlmProvider, string> = {
+  openai: "LINKROWTH_OPENAI_DRAFT_MODEL",
+  gemini: "LINKROWTH_GEMINI_DRAFT_MODEL",
+};
+
 let cached: LlmEnvConfig | null = null;
 
 function readProvider(value: string | undefined): LlmProvider {
@@ -45,10 +55,14 @@ function readProvider(value: string | undefined): LlmProvider {
 }
 
 function buildProviderConfig(provider: LlmProvider): ProviderConfig {
+  const defaultModel =
+    process.env[MODEL_ENV_VARS[provider]]?.trim() ?? DEFAULT_MODELS[provider];
+
   return {
     apiKey: process.env[PROVIDER_ENV_VARS[provider]]?.trim() ?? "",
-    defaultModel:
-      process.env[MODEL_ENV_VARS[provider]]?.trim() ?? DEFAULT_MODELS[provider],
+    defaultModel,
+    draftModel:
+      process.env[DRAFT_MODEL_ENV_VARS[provider]]?.trim() || defaultModel,
     apiKeyEnvVar: PROVIDER_ENV_VARS[provider],
   };
 }
@@ -83,4 +97,10 @@ export function getActiveProviderConfig(): ProviderConfig & { provider: LlmProvi
   }
 
   return { provider: env.provider, ...config };
+}
+
+/** Model for a multi-step role. Draft may be stronger; analyze/refine use the default. */
+export function getStepModel(step: EngageLlmStep): string {
+  const { defaultModel, draftModel } = getActiveProviderConfig();
+  return step === "draft" ? draftModel : defaultModel;
 }
