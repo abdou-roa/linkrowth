@@ -23,6 +23,10 @@
     "./types": {
       "types": "./dist/core/types.d.ts",
       "default": "./dist/core/types.js"
+    },
+    "./observability": {
+      "types": "./dist/observability/index.d.ts",
+      "default": "./dist/observability/index.js"
     }
   },
   "scripts": {
@@ -35,6 +39,7 @@
     "@google/genai": "^1.10.0",
     "dotenv": "^17.2.0",
     "openai": "^5.10.0",
+    "openlit": "^1.15.0",
     "pg": "^8.22.0"
   },
   "devDependencies": {
