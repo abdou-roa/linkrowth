@@ -1,7 +1,10 @@
+import { initObservability } from "@linkrowth/agent/observability";
 import { createApp } from "./app";
 import { env, validateEnv } from "./config/env";
 import { closePool } from "./db/client";
 
+// Patch LLM SDKs before in-process engage runs (must precede first LLM call).
+initObservability();
 validateEnv();
 
 const app = createApp();

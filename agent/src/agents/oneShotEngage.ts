@@ -1,4 +1,5 @@
 import { engage } from "../core/engage";
+import { withTrace } from "../observability";
 import type { ReasoningStep } from "../steps/types";
 import type { Agent, AgentRunInput, AgentRunResult } from "./types";
 
@@ -13,24 +14,37 @@ class OneShotEngageAgent implements Agent {
   readonly id = ONE_SHOT_ENGAGE_AGENT_ID;
 
   async run({ post, context }: AgentRunInput): Promise<AgentRunResult> {
-    const startedAt = new Date().toISOString();
-    const result = await engage(post, context);
-    const completedAt = new Date().toISOString();
+    return withTrace(
+      "engage.step.engage_oneshot",
+      { "linkrowth.step": "engage_oneshot", "linkrowth.agent_id": this.id },
+      async (span) => {
+        const startedAt = new Date().toISOString();
+        const result = await engage(post, context);
+        const completedAt = new Date().toISOString();
 
-    const step: ReasoningStep = {
-      name: "engage_oneshot",
-      status: "completed",
-      summary: "Single-prompt engage completed",
-      output: result,
-      startedAt,
-      completedAt,
-    };
+        span.setMetadata({
+          "linkrowth.category": result.category ?? "",
+        });
+        if (result.suggestion) {
+          span.setResult(result.suggestion);
+        }
 
-    return {
-      agentId: this.id,
-      result,
-      steps: [step],
-    };
+        const step: ReasoningStep = {
+          name: "engage_oneshot",
+          status: "completed",
+          summary: "Single-prompt engage completed",
+          output: result,
+          startedAt,
+          completedAt,
+        };
+
+        return {
+          agentId: this.id,
+          result,
+          steps: [step],
+        };
+      }
+    );
   }
 }
 

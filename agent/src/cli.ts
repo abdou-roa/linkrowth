@@ -3,6 +3,7 @@ import { getActiveProviderConfig } from "./config/llm";
 import { getDatabaseUrl } from "./config/db";
 import { createInterface } from "node:readline";
 import { stdin } from "node:process";
+import { initObservability } from "./observability";
 import { runEngage } from "./persistence/runEngage";
 
 function validateEnv(): void {
@@ -71,6 +72,8 @@ async function main(): Promise<void> {
   }
 
   try {
+    // Before any LLM client is constructed so OpenLIT can patch providers.
+    initObservability();
     validateEnv();
     await runEngageCommand();
   } catch (error) {

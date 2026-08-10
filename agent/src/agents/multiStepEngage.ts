@@ -1,4 +1,5 @@
 import { call } from "../llm";
+import { withTrace } from "../observability";
 import { analyzerStep } from "../steps/analyzer";
 import { drafterStep } from "../steps/drafter";
 import { refinerStep } from "../steps/refiner";
@@ -16,11 +17,7 @@ export const MULTI_STEP_ENGAGE_AGENT_ID = "multi_step_engage";
 /** Max refiner cycles before accepting the current draft. */
 const MAX_REFINE_ATTEMPTS = 2;
 
-/**
- * TEMP — run analyze → draft → refine once and stop, so the critique can be
- * inspected against real drafts. The drafter now consumes feedbackHistory;
- * flip to false to enable the reject → redraft loop.
- */
+/** When true, stop after one refine pass (no redraft). Keep false for production. */
 const CRITIQUE_ONLY = true;
 
 /** Factory function to initialize clean state per execution. */
@@ -103,21 +100,36 @@ export class MultiStepEngageAgent implements Agent {
     step: Step,
     currentState: EngageState
   ): Promise<EngageState> {
-    const startedAt = new Date().toISOString();
-    const stepResult = await step.run(currentState, this.deps);
-    const completedAt = new Date().toISOString();
+    return withTrace(
+      `engage.step.${step.name}`,
+      {
+        "linkrowth.step": step.name,
+        "linkrowth.attempt": currentState.attempts,
+        "linkrowth.agent_id": this.id,
+      },
+      async (span) => {
+        const startedAt = new Date().toISOString();
+        const stepResult = await step.run(currentState, this.deps);
+        const completedAt = new Date().toISOString();
 
-    const stepRecord: ReasoningStep = {
-      ...stepResult.record,
-      startedAt,
-      completedAt,
-    };
+        span.setMetadata({
+          "linkrowth.step_status": stepResult.record.status,
+          "linkrowth.step_summary": stepResult.record.summary ?? "",
+        });
 
-    return {
-      ...currentState,
-      ...stepResult.patch,
-      steps: [...currentState.steps, stepRecord],
-    };
+        const stepRecord: ReasoningStep = {
+          ...stepResult.record,
+          startedAt,
+          completedAt,
+        };
+
+        return {
+          ...currentState,
+          ...stepResult.patch,
+          steps: [...currentState.steps, stepRecord],
+        };
+      }
+    );
   }
 }
 

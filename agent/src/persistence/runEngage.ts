@@ -3,6 +3,7 @@ import { MULTI_STEP_ENGAGE_AGENT_ID } from "../agents/multiStepEngage";
 import { getAgent } from "../agents/registry";
 import { loadUserContext } from "../context/loadUserContext";
 import type { Post, UserContext } from "../core/types";
+import { withTrace } from "../observability";
 import {
   claimSuggestionJob,
   failSuggestionJob,
@@ -50,21 +51,40 @@ export async function runEngage(
   const postId = post.id ?? randomUUID();
 
   try {
-    const { result, steps, agentId } = await agent.run({ post, context });
-    const createdAt = new Date().toISOString();
+    return await withTrace(
+      "engage.run",
+      {
+        "linkrowth.agent_id": agent.id,
+        "linkrowth.job_id": jobId,
+        "linkrowth.post_id": postId,
+      },
+      async (span) => {
+        const { result, steps, agentId } = await agent.run({ post, context });
+        const createdAt = new Date().toISOString();
 
-    const record: RunRecord = {
-      id: randomUUID(),
-      jobId,
-      postId,
-      agentId,
-      post: { ...post, id: postId },
-      result,
-      steps,
-      createdAt,
-    };
+        span.setMetadata({
+          "linkrowth.agent_id": agentId,
+          "linkrowth.step_count": steps.length,
+          "linkrowth.category": result.category ?? "",
+        });
+        if (result.suggestion) {
+          span.setResult(result.suggestion);
+        }
 
-    return await repository.save(record);
+        const record: RunRecord = {
+          id: randomUUID(),
+          jobId,
+          postId,
+          agentId,
+          post: { ...post, id: postId },
+          result,
+          steps,
+          createdAt,
+        };
+
+        return await repository.save(record);
+      }
+    );
   } catch (err) {
     if (jobId && !(err instanceof JobNotClaimableError)) {
       const message = err instanceof Error ? err.message : String(err);
