@@ -18,7 +18,7 @@ export const MULTI_STEP_ENGAGE_AGENT_ID = "multi_step_engage";
 const MAX_REFINE_ATTEMPTS = 2;
 
 /** When true, stop after one refine pass (no redraft). Keep false for production. */
-const CRITIQUE_ONLY = true;
+const CRITIQUE_ONLY = false;
 
 /** Factory function to initialize clean state per execution. */
 function createInitialState(input: AgentRunInput): EngageState {
