@@ -13,15 +13,8 @@ import type {
 
 export const MULTI_STEP_ENGAGE_AGENT_ID = "multi_step_engage";
 
-/** Max refiner cycles before accepting the current draft. */
+/** Max draft+refine cycles before accepting the current draft. */
 const MAX_REFINE_ATTEMPTS = 2;
-
-/**
- * TEMP — run analyze → draft → refine once and stop, so the critique can be
- * inspected against real drafts. The drafter now consumes feedbackHistory;
- * flip to false to enable the reject → redraft loop.
- */
-const CRITIQUE_ONLY = true;
 
 /** Factory function to initialize clean state per execution. */
 function createInitialState(input: AgentRunInput): EngageState {
@@ -65,26 +58,15 @@ export class MultiStepEngageAgent implements Agent {
     // 3. Step 2: Draft initial comment from the analysis
     state = await this.executeStep(drafterStep, state);
 
-    if (CRITIQUE_ONLY) {
-      state = await this.executeStep(refinerStep, state);
-
-      return {
-        agentId: this.id,
-        result: finalizeResult(state),
-        steps: state.steps,
-      };
-    }
-
-    // 4. Step 3 & Reflection Loop: Refine <-> Draft
+    // 4. Refine ↔ redraft until approved or attempts are exhausted
     while (state.attempts <= MAX_REFINE_ATTEMPTS) {
       state = await this.executeStep(refinerStep, state);
 
-      // Exit loop early if refiner approves or flags ready
       if (state.isApproved || state.status === "ready_for_review") {
         break;
       }
 
-      // If rejected, increment attempts and re-run Drafter with updated feedbackHistory
+      // Rejected: bump attempt and redraft with updated feedbackHistory
       state.attempts += 1;
       if (state.attempts <= MAX_REFINE_ATTEMPTS) {
         state = await this.executeStep(drafterStep, state);
