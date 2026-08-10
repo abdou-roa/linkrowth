@@ -1,3 +1,4 @@
+  import { getStepModel } from "../config/llm";
   import { extractJsonBlock } from "../core/parse";
   import type { UserContext } from "../core/types";
   import type {
@@ -304,6 +305,7 @@
 
     async run(state: EngageState, deps: StepDeps): Promise<StepResult> {
       const raw = await deps.call({
+        model: getStepModel("analyze"),
         system: buildSystemPrompt(state.context),
         user: buildUserMessage(state),
         maxTokens: 768,
