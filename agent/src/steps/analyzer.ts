@@ -132,15 +132,42 @@
     - "technical" + technicalDepth "accessible": same scale as above but never "extended" — accessible insights stay at "short" or "standard".
 
   HUMAN CLARIFICATION RULES:
-  - Decide whether a grounded comment requires a fact only the commenter can provide (their experience, stance, result, preference, relationship, or intent).
-  - Set "clarification.needed" to true ONLY when drafting without that answer would force invention or a generic substitute.
-  - When needed is true:
-    - "question": one focused, answerable question for the commenter (not for the post author).
-    - "reason": one line explaining what the drafter will do with the answer.
-  - When needed is false: set question and reason to "".
-  - Prefer needed=false when USER DOMAIN CONTEXT, the post, and a careful generic contribution are already enough.
-  - Never ask for information already present in USER DOMAIN CONTEXT.
-  - Ask at most one question. Do not ask multi-part questionnaires.
+  Decide whether to pause the pipeline and ask the commenter one question before drafting. Default to not asking — pausing a human is expensive.
+
+  Set "clarification.needed" to true ONLY when ALL of these hold:
+  1. The insightDirection (or an answerable postQuestion) depends on a fact only this commenter can supply: their lived experience, stance, result, preference, relationship to the author/topic, or intent for this comment.
+  2. That fact is NOT already in USER DOMAIN CONTEXT.
+  3. Drafting without it would force either invention (a fake "I/we" story, metric, or opinion) or a generic substitute that would make the comment interchangeable with anyone else's.
+  4. The answer would materially change what the drafter writes — not just add color.
+
+  Set needed=false when any of these is true:
+  - USER DOMAIN CONTEXT + the post already support a grounded contribution (a general operational insight, a niche-bridged trade-off, or a careful generic reply).
+  - The missing detail would only make the comment marginally better.
+  - The post is a routine achievement or informal update that does not require a personal anecdote.
+  - You would be asking the commenter to restate something already in USER DOMAIN CONTEXT.
+  - You are unsure. Bias toward needed=false.
+
+  QUESTION STRUCTURE (only when needed=true):
+  "question" is shown to the commenter in the product UI. They answer in one short reply. Never address the post author.
+  - One sentence. One fact. No multi-part questionnaires, no stacked "and/or" asks.
+  - Second person ("you" / "your").
+  - Ground it in THIS post so it is answerable without rereading: name the tool, claim, or ask you need their take on.
+  - Prefer a form they can answer in a few words: yes/no, A vs B, a short specific fact, or a one-line stance.
+  - Do not ask them to write the comment, pick a tone, or approve the strategy — that is the drafter's job.
+
+  "reason" is one line for the drafter (not the user-facing question): what you will do with their answer.
+
+  Examples:
+  - needed=true — post asks "what's your stack for agent evals?", context has no stack.
+    question: "For agent evals, do you actually use an offline harness, production traces, or something else?"
+    reason: "Ground the reply in their real eval setup instead of inventing a stack."
+  - needed=true — insightDirection wants a personal result on connection pooling, context has none.
+    question: "Have you hit connection-pool exhaustion in production, and if so what broke first?"
+    reason: "Use their real failure mode as the pivot instead of a generic pooling claim."
+  - needed=false — context already says they build agent pipelines and the post is about agent reliability. A general operational insight is enough; do not ask "do you work on agents?"
+  - needed=false — achievement post announcing a new role. A specific detail from the post is enough; do not ask "do you know this person?"
+
+  When needed is false: set question and reason to "".
 
   OUTPUT FORMAT:
   Return only the JSON object. No markdown fences, no explanation.
