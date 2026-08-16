@@ -28,6 +28,7 @@ class OneShotEngageAgent implements Agent {
 
     return {
       agentId: this.id,
+      status: "completed",
       result,
       steps: [step],
     };

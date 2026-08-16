@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { getPool } from "./client";
 import type {
+  ClarificationSummary,
   FeedPostInput,
   GetSuggestionResponse,
   SuggestionJobStatus,
@@ -79,7 +80,8 @@ async function findActiveJob(
   }>(
     `SELECT id, post_id, status
      FROM suggestion_jobs
-     WHERE post_id = $1 AND status IN ('queued', 'running')
+     WHERE post_id = $1
+       AND status IN ('queued', 'running', 'awaiting_clarification')
      ORDER BY created_at DESC
      LIMIT 1`,
     [postId]
@@ -158,6 +160,7 @@ export async function getSuggestionJob(
     post_id: string;
     status: SuggestionJobStatus;
     error: string | null;
+    clarification: ClarificationSummary | null;
     suggestion: string | null;
     rationale: string | null;
     category: string | null;
@@ -169,6 +172,7 @@ export async function getSuggestionJob(
        j.post_id,
        j.status,
        j.error,
+       j.clarification,
        r.suggestion,
        r.rationale,
        r.category,
@@ -194,6 +198,7 @@ export async function getSuggestionJob(
     postId: row.post_id,
     status: row.status,
     error: row.error,
+    clarification: row.clarification ?? null,
     run: row.has_run
       ? {
           suggestion: row.suggestion,

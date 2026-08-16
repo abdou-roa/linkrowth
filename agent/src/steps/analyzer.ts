@@ -4,6 +4,7 @@
   import type {
     AnalysisArtifact,
     AuthorSeniority,
+    HumanClarification,
     PostQuestion,
     PostTone,
     QuestionReplyDecision,
@@ -13,6 +14,13 @@
   import type { Step, StepResult } from "./types";
   import type { EngageState, StepDeps } from "./types";
   import { answerableQuestions } from "./types";
+
+  /** Analyzer-only shape before it is mapped onto HumanClarification. */
+  interface ClarificationRequest {
+    needed: boolean;
+    question: string;
+    reason: string;
+  }
 
   // ---------------------------------------------------------------------------
   // Prompt
@@ -123,6 +131,17 @@
     - "achievement" / "informal": default "short"; bump to "standard" only when insightDirection genuinely needs two beats or there is an answerable postQuestion. Never "extended".
     - "technical" + technicalDepth "accessible": same scale as above but never "extended" — accessible insights stay at "short" or "standard".
 
+  HUMAN CLARIFICATION RULES:
+  - Decide whether a grounded comment requires a fact only the commenter can provide (their experience, stance, result, preference, relationship, or intent).
+  - Set "clarification.needed" to true ONLY when drafting without that answer would force invention or a generic substitute.
+  - When needed is true:
+    - "question": one focused, answerable question for the commenter (not for the post author).
+    - "reason": one line explaining what the drafter will do with the answer.
+  - When needed is false: set question and reason to "".
+  - Prefer needed=false when USER DOMAIN CONTEXT, the post, and a careful generic contribution are already enough.
+  - Never ask for information already present in USER DOMAIN CONTEXT.
+  - Ask at most one question. Do not ask multi-part questionnaires.
+
   OUTPUT FORMAT:
   Return only the JSON object. No markdown fences, no explanation.
 
@@ -154,6 +173,11 @@
     "responseParameters": {
       "technicalDepth": "high | accessible",
       "suggestedLength": "short | standard | extended"
+    },
+    "clarification": {
+      "needed": false,
+      "question": "",
+      "reason": ""
     }
   }`;
   }
@@ -203,11 +227,48 @@
     }, []);
   }
 
-  function parseAnalysis(raw: string): AnalysisArtifact {
+  function parseClarificationRequest(raw: unknown): ClarificationRequest {
+    const candidate = (raw ?? {}) as Partial<ClarificationRequest>;
+    const question =
+      typeof candidate.question === "string" ? candidate.question.trim() : "";
+    const reason =
+      typeof candidate.reason === "string" ? candidate.reason.trim() : "";
+    const needed = Boolean(candidate.needed) && question.length > 0;
+
+    return {
+      needed,
+      question: needed ? question : "",
+      reason: needed
+        ? reason || "Needed so the drafter can ground the comment in the user's real answer."
+        : "",
+    };
+  }
+
+  function toHumanClarification(
+    request: ClarificationRequest,
+  ): HumanClarification {
+    if (!request.needed) {
+      return { status: "not_needed" };
+    }
+
+    return {
+      status: "pending",
+      question: request.question,
+      reason: request.reason,
+      askedAt: new Date().toISOString(),
+    };
+  }
+
+  function parseAnalysis(raw: string): {
+    analysis: AnalysisArtifact;
+    clarificationRequest: ClarificationRequest;
+  } {
     const json = extractJsonBlock(raw);
     const parsed = JSON.parse(json) as AnalysisArtifact & {
       pivotStrategy?: AnalysisArtifact["pivotStrategy"] & { coreThesis?: unknown };
+      clarification?: unknown;
     };
+    const clarificationRequest = parseClarificationRequest(parsed.clarification);
 
     // Keep coreThesis at the top-level contract. Accept the old nested shape so
     // an occasional stale/model response still reaches the drafter correctly.
@@ -280,7 +341,13 @@
       suggestedLength,
     };
 
-    return parsed;
+    // Drop analyzer-only clarification field from the analysis artifact.
+    delete (parsed as { clarification?: unknown }).clarification;
+
+    return {
+      analysis: parsed,
+      clarificationRequest,
+    };
   }
 
   // NOTE: Post.comments isn't populated yet — the extension can't fetch existing
@@ -311,21 +378,29 @@
         maxTokens: 768,
       });
 
-      const analysis = parseAnalysis(raw);
+      const { analysis, clarificationRequest } = parseAnalysis(raw);
+      const clarification = toHumanClarification(clarificationRequest);
+      const awaiting = clarification.status === "pending";
 
       console.log(
         "\n========== ANALYZER OUTPUT ==========\n" +
-          JSON.stringify(analysis, null, 2) +
+          JSON.stringify({ analysis, clarification }, null, 2) +
           "\n=====================================\n",
       );
 
       return {
-        patch: { analysis },
+        patch: {
+          analysis,
+          clarification,
+          ...(awaiting ? { status: "awaiting_clarification" as const } : {}),
+        },
         record: {
           name: "analyze",
           status: "completed",
-          summary: `${analysis.category} · ${analysis.tone} · ${analysis.authorProfile.isTechnical ? "technical author" : "non-technical author"} · ${analysis.responseParameters.technicalDepth}/${analysis.responseParameters.suggestedLength} · ${analysis.coreThesis.slice(0, 80)}`,
-          output: analysis,
+          summary: awaiting
+            ? `clarification needed · ${clarification.question?.slice(0, 80)}`
+            : `${analysis.category} · ${analysis.tone} · ${analysis.authorProfile.isTechnical ? "technical author" : "non-technical author"} · ${analysis.responseParameters.technicalDepth}/${analysis.responseParameters.suggestedLength} · ${analysis.coreThesis.slice(0, 80)}`,
+          output: { analysis, clarification },
         },
       };
     },

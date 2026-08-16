@@ -3,10 +3,12 @@ import { MULTI_STEP_ENGAGE_AGENT_ID } from "../agents/multiStepEngage";
 import { getAgent } from "../agents/registry";
 import { loadUserContext } from "../context/loadUserContext";
 import type { Post, UserContext } from "../core/types";
+import type { AnalysisArtifact, HumanClarification } from "../steps/types";
 import {
   claimSuggestionJob,
   failSuggestionJob,
   JobNotClaimableError,
+  pauseSuggestionJobForClarification,
 } from "./jobStatus";
 import { createPostgresRunRepository } from "./postgresRepository";
 import type { RunRecord, RunRepository } from "./types";
@@ -22,7 +24,21 @@ export interface RunEngageOptions {
   jobId?: string;
   /** When true with jobId, skip the queued → running claim (caller already claimed). */
   skipClaim?: boolean;
+  /** Optional clarification for resume (answered) or seed. */
+  clarification?: HumanClarification;
+  /** Analysis checkpoint used with an answered clarification on resume. */
+  analysis?: AnalysisArtifact;
 }
+
+export type RunEngageOutcome =
+  | { kind: "completed"; run: RunRecord }
+  | {
+      kind: "awaiting_clarification";
+      jobId?: string;
+      agentId: string;
+      clarification: HumanClarification;
+      steps: RunRecord["steps"];
+    };
 
 /**
  * Persistence wrapper around the engage agents: resolve context, claim the job,
@@ -33,6 +49,29 @@ export async function runEngage(
   post: Post,
   options: RunEngageOptions = {}
 ): Promise<RunRecord> {
+  const outcome = await runEngageWithStatus(post, options);
+  if (outcome.kind === "awaiting_clarification") {
+    // Callers that only expect a completed RunRecord treat pause as a soft stop.
+    // Prefer runEngageWithStatus when you need to handle HITL explicitly.
+    throw new Error(
+      `Suggestion requires clarification${
+        outcome.clarification.question
+          ? `: ${outcome.clarification.question}`
+          : ""
+      }`
+    );
+  }
+  return outcome.run;
+}
+
+/**
+ * Like runEngage, but returns a discriminated outcome so API/workers can pause
+ * for human clarification without treating it as failure.
+ */
+export async function runEngageWithStatus(
+  post: Post,
+  options: RunEngageOptions = {}
+): Promise<RunEngageOutcome> {
   const context = options.context ?? loadUserContext();
   const repository = options.repository ?? createPostgresRunRepository();
   const agent = getAgent(
@@ -50,21 +89,56 @@ export async function runEngage(
   const postId = post.id ?? randomUUID();
 
   try {
-    const { result, steps, agentId } = await agent.run({ post, context });
+    const outcome = await agent.run({
+      post,
+      context,
+      clarification: options.clarification,
+      analysis: options.analysis,
+    });
+
+    if (outcome.status === "awaiting_clarification") {
+      if (!outcome.clarification || !outcome.analysis) {
+        throw new Error(
+          "Agent paused for clarification but did not return clarification + analysis"
+        );
+      }
+
+      if (jobId) {
+        await pauseSuggestionJobForClarification(jobId, {
+          agentId: outcome.agentId,
+          analysis: outcome.analysis,
+          clarification: outcome.clarification,
+          steps: outcome.steps,
+        });
+      }
+
+      return {
+        kind: "awaiting_clarification",
+        jobId,
+        agentId: outcome.agentId,
+        clarification: outcome.clarification,
+        steps: outcome.steps,
+      };
+    }
+
+    if (!outcome.result) {
+      throw new Error("Agent completed without a result");
+    }
+
     const createdAt = new Date().toISOString();
 
     const record: RunRecord = {
       id: randomUUID(),
       jobId,
       postId,
-      agentId,
+      agentId: outcome.agentId,
       post: { ...post, id: postId },
-      result,
-      steps,
+      result: outcome.result,
+      steps: outcome.steps,
       createdAt,
     };
 
-    return await repository.save(record);
+    return { kind: "completed", run: await repository.save(record) };
   } catch (err) {
     if (jobId && !(err instanceof JobNotClaimableError)) {
       const message = err instanceof Error ? err.message : String(err);

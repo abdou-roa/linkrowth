@@ -21,23 +21,73 @@ CREATE TABLE IF NOT EXISTS posts (
 CREATE TABLE IF NOT EXISTS suggestion_jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   post_id TEXT NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
-  status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed')),
+  status TEXT NOT NULL CHECK (
+    status IN (
+      'queued',
+      'running',
+      'awaiting_clarification',
+      'succeeded',
+      'failed'
+    )
+  ),
   priority INT NOT NULL DEFAULT 0,
   triage JSONB,
   notes TEXT,
+  -- Analyzer clarification question / answer payload for HITL
+  clarification JSONB,
+  -- Analysis + steps checkpoint so a paused job can resume at the drafter
+  checkpoint JSONB,
   error TEXT,
   started_at TIMESTAMPTZ,
   finished_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Existing DBs created before notes existed
+-- Existing DBs created before notes / HITL columns existed
 ALTER TABLE suggestion_jobs ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE suggestion_jobs ADD COLUMN IF NOT EXISTS clarification JSONB;
+ALTER TABLE suggestion_jobs ADD COLUMN IF NOT EXISTS checkpoint JSONB;
 
--- At most one active (queued or running) job per post
-CREATE UNIQUE INDEX IF NOT EXISTS suggestion_jobs_one_active_per_post
+-- Widen status CHECK for existing DBs (CREATE TABLE IF NOT EXISTS won't alter it)
+DO $$
+DECLARE
+  constraint_name TEXT;
+BEGIN
+  SELECT con.conname
+  INTO constraint_name
+  FROM pg_constraint con
+  JOIN pg_class rel ON rel.oid = con.conrelid
+  JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+  WHERE rel.relname = 'suggestion_jobs'
+    AND nsp.nspname = current_schema()
+    AND con.contype = 'c'
+    AND pg_get_constraintdef(con.oid) ILIKE '%status%';
+
+  IF constraint_name IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE suggestion_jobs DROP CONSTRAINT %I', constraint_name);
+  END IF;
+
+  ALTER TABLE suggestion_jobs
+    ADD CONSTRAINT suggestion_jobs_status_check
+    CHECK (
+      status IN (
+        'queued',
+        'running',
+        'awaiting_clarification',
+        'succeeded',
+        'failed'
+      )
+    );
+EXCEPTION
+  WHEN duplicate_object THEN
+    NULL;
+END $$;
+
+-- At most one active (queued, running, or awaiting clarification) job per post
+DROP INDEX IF EXISTS suggestion_jobs_one_active_per_post;
+CREATE UNIQUE INDEX suggestion_jobs_one_active_per_post
   ON suggestion_jobs (post_id)
-  WHERE status IN ('queued', 'running');
+  WHERE status IN ('queued', 'running', 'awaiting_clarification');
 
 CREATE INDEX IF NOT EXISTS suggestion_jobs_status_priority_idx
   ON suggestion_jobs (status, priority DESC, created_at ASC);

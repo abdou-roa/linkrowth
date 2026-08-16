@@ -152,6 +152,20 @@ async function enqueueSuggestion(
       };
     }
 
+    if (job.status === "awaiting_clarification") {
+      const question =
+        job.clarification?.question?.trim() ||
+        "The analyzer needs a clarification before drafting.";
+      return {
+        type: MessageType.GENERATE_SUGGESTION_RESULT,
+        ok: false,
+        feedPostId,
+        jobId: job.jobId,
+        status: job.status,
+        error: `Clarification needed: ${question}`,
+      };
+    }
+
     const suggestion = job.run?.suggestion?.trim();
     if (!suggestion) {
       return {

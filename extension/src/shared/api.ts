@@ -49,9 +49,15 @@ export interface SuggestionRunSummary {
 export interface GetSuggestionResponse {
   jobId: string;
   postId: string;
-  status: "queued" | "running" | "succeeded" | "failed" | string;
+  status: "queued" | "running" | "awaiting_clarification" | "succeeded" | "failed" | string;
   error: string | null;
   run: SuggestionRunSummary | null;
+  clarification?: {
+    status?: string;
+    question?: string | null;
+    reason?: string | null;
+    answer?: string | null;
+  } | null;
 }
 
 export interface ApiErrorBody {
@@ -140,10 +146,15 @@ export async function getSuggestion(
   return ok;
 }
 
-const TERMINAL_STATUSES = new Set(["succeeded", "failed"]);
+const SETTLED_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "awaiting_clarification",
+]);
 
 /**
- * Poll GET /v1/suggestions/:jobId until the job finishes or times out.
+ * Poll GET /v1/suggestions/:jobId until the job finishes, pauses for
+ * clarification, or times out.
  */
 export async function waitForSuggestion(
   jobId: string,
@@ -155,7 +166,7 @@ export async function waitForSuggestion(
 
   for (;;) {
     const job = await getSuggestion(jobId);
-    if (TERMINAL_STATUSES.has(job.status)) {
+    if (SETTLED_STATUSES.has(job.status)) {
       return job;
     }
     if (Date.now() - started >= timeoutMs) {
