@@ -42,6 +42,8 @@ services:
       LINKROWTH_PROVIDER: ${LINKROWTH_PROVIDER:-openai}
       LINKROWTH_OPENAI_MODEL: ${LINKROWTH_OPENAI_MODEL:-gpt-4o-mini}
       LINKROWTH_GEMINI_MODEL: ${LINKROWTH_GEMINI_MODEL:-gemini-2.5-flash}
+      LINKROWTH_OPENAI_ANALYZE_MODEL: ${LINKROWTH_OPENAI_ANALYZE_MODEL:-gpt-5.4}
+      LINKROWTH_GEMINI_ANALYZE_MODEL: ${LINKROWTH_GEMINI_ANALYZE_MODEL:-gemini-2.5-pro}
     depends_on:
       postgres:
         condition: service_healthy
