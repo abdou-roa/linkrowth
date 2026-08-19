@@ -14,6 +14,68 @@ export function extractJsonBlock(raw: string): string {
   return raw.trim();
 }
 
+/**
+ * Repair common LLM JSON mistakes that break JSON.parse, without changing
+ * string contents (trailing commas only outside quotes).
+ */
+export function repairJson(json: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i];
+
+    if (inString) {
+      out += ch;
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+
+    // Drop trailing commas before } or ]
+    if (ch === ",") {
+      let j = i + 1;
+      while (j < json.length && /\s/.test(json[j]!)) j++;
+      const next = json[j];
+      if (next === "}" || next === "]") {
+        continue;
+      }
+    }
+
+    out += ch;
+  }
+
+  return out;
+}
+
+/** extractJsonBlock + trailing-comma repair, then JSON.parse. */
+export function parseJsonBlock<T = unknown>(raw: string): T {
+  const block = extractJsonBlock(raw);
+  try {
+    return JSON.parse(block) as T;
+  } catch (first) {
+    try {
+      return JSON.parse(repairJson(block)) as T;
+    } catch {
+      throw first instanceof Error
+        ? first
+        : new Error(`Failed to parse JSON block: ${String(first)}`);
+    }
+  }
+}
+
 export function parseEngageResponse(text: string): EngageResult {
   const cleanedText = text
     .replace(/^```(?:markdown)?\n/i, "")

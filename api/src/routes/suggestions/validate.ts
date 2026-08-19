@@ -141,3 +141,22 @@ export function parseJobId(value: string): string {
   }
   return value;
 }
+
+const MAX_CLARIFICATION_ANSWER_CHARS = 1000;
+
+/** Validate PATCH /v1/suggestions/:jobId/clarification body. */
+export function parseClarificationAnswer(body: unknown): { answer: string } {
+  if (!isPlainObject(body)) {
+    throw new ValidationError("Request body must be a JSON object");
+  }
+  const answer = requiredString(body.answer, "answer").trim();
+  if (!answer) {
+    throw new ValidationError("answer is required");
+  }
+  if (answer.length > MAX_CLARIFICATION_ANSWER_CHARS) {
+    throw new ValidationError(
+      `answer must be at most ${MAX_CLARIFICATION_ANSWER_CHARS} characters`
+    );
+  }
+  return { answer };
+}

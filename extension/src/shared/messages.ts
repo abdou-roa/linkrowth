@@ -12,6 +12,7 @@ export const MessageType = {
   FOCUS_POST: "focus_post",
   GENERATE_SUGGESTION: "generate_suggestion",
   GENERATE_SUGGESTION_RESULT: "generate_suggestion_result",
+  SUBMIT_CLARIFICATION: "submit_clarification",
   REMOVE_TRIAGE: "remove_triage",
   REMOVE_TRIAGE_RESULT: "remove_triage_result",
   TRIAGE_REMOVED: "triage_removed",
@@ -68,7 +69,16 @@ export interface GenerateSuggestionResultMessage {
   suggestion?: string;
   rationale?: string;
   category?: string;
+  /** Present when status is awaiting_clarification. */
+  question?: string;
   error?: string;
+}
+
+export interface SubmitClarificationMessage {
+  type: typeof MessageType.SUBMIT_CLARIFICATION;
+  feedPostId: string;
+  jobId: string;
+  answer: string;
 }
 
 export interface RemoveTriageMessage {
@@ -98,6 +108,7 @@ export type ExtensionMessage =
   | FocusPostMessage
   | GenerateSuggestionMessage
   | GenerateSuggestionResultMessage
+  | SubmitClarificationMessage
   | RemoveTriageMessage
   | RemoveTriageResultMessage
   | TriageRemovedMessage;

@@ -1,5 +1,5 @@
 import { getStepModel } from "../config/llm";
-import { extractJsonBlock } from "../core/parse";
+import { parseJsonBlock } from "../core/parse";
 import { buildVoiceSection, formatBulletList, hasItems } from "../core/prompt";
 import type { UserContext } from "../core/types";
 import type {
@@ -207,7 +207,7 @@ const MODEL_DIMENSIONS: FindingDimension[] = [
 const BLOCKING_DIMENSIONS: FindingDimension[] = ["fabrication", "length"];
 
 function parseFindings(raw: string): CritiqueFinding[] {
-  const parsed = JSON.parse(extractJsonBlock(raw)) as { findings?: unknown };
+  const parsed = parseJsonBlock<{ findings?: unknown }>(raw);
 
   if (!Array.isArray(parsed.findings)) return [];
 
