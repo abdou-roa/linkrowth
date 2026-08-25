@@ -66,7 +66,7 @@ Each Episode adds exactly one layer, and only when the previous one has a *demon
 | **3** | Triage: score whether a post is worth engaging | "Good comment, I still hunt posts manually" | ✅ **shipped** (heuristic, in-extension) |
 | **4** | Browser extension surfaces the feed | "It forgets who I've already talked to" | ✅ **shipped** (feed → triage → Generate via API) |
 | **5** | Memory: relationships, history, no repeats | "One-shot drafts are mediocre" | 🔜 planned |
-| **6** | Critic loop: analyze → draft → refine | "It's a pile of scripts" | 🚧 **in progress** (pipeline live; reject → redraft loop gated) |
+| **6** | Critic loop: analyze → draft → refine | "It's a pile of scripts" | ✅ **shipped** (reject → redraft loop, up to 2 attempts) |
 | **7** | Orchestration: daily prioritized engagement queue | Season finale / X port | 🔜 planned |
 
 > Full rationale, decision log, and data model: [`docs/SPEC.md`](./docs/SPEC.md). Multi-step design: [`docs/MULTI-STEP-AGENT.md`](./docs/MULTI-STEP-AGENT.md).
@@ -86,7 +86,7 @@ Each Episode adds exactly one layer, and only when the previous one has a *demon
                                        │ @linkrowth/agent/runs
                                        ▼
                         agent/  multi_step_engage (default)
-                        analyze → draft → refine
+                        analyze → draft → refine  (reject → redraft, max 2)
                         (one_shot_engage still available)
                                        │
                                        ▼
@@ -107,8 +107,8 @@ post + UserContext
    drafter    → comment draft + rationale (category playbook + voice)
         │
         ▼
-   refiner    → critique against anti-AI / voice / length guardrails
-                (reject → redraft loop exists; currently critique-only while tuning)
+   refiner    → critique against fabrication / voice / length guardrails
+                (reject → redraft with feedbackHistory; max 2 attempts)
         │
         ▼
    { suggestion, rationale }  (+ reasoning steps persisted as JSON)
@@ -189,7 +189,7 @@ npm run build              # → extension/dist
 npm run dev                # Vite + CRX HMR
 ```
 
-Load it in Chrome: `chrome://extensions` → enable Developer mode → **Load unpacked** → select `extension/dist`. Open the LinkedIn feed, click the Linkrowth action to open the side panel, and scroll — fully visible posts get scored and badged. Open a comment box (or focus a post from the panel) to use **Generate comment**, which calls the API and fills the draft. Details: [`extension/README.md`](./extension/README.md), scoring rules in [`extension/SCORING.md`](./extension/SCORING.md).
+Load it in Chrome: `chrome://extensions` → enable Developer mode → **Load unpacked** → select `extension/dist`. Open the LinkedIn feed, click the Linkrowth action to open the side panel, and scroll — fully visible posts get scored and badged. Open a comment box (or click a post in the panel) to use **Generate comment**, which calls the API and fills the draft. Details: [`extension/README.md`](./extension/README.md), scoring rules in [`extension/SCORING.md`](./extension/SCORING.md).
 
 ## Swappable LLM providers
 
@@ -206,9 +206,15 @@ LINKROWTH_PROVIDER=openai   # openai (default) · gemini
 
 Only the active provider's key is validated at startup (fail-fast). Anthropic / Kimi are deferred until a real provider gap appears.
 
+**Model tiering:** analyzer and refiner use the default model; the drafter can use a stronger one without changing providers:
+
+```bash
+LINKROWTH_OPENAI_DRAFT_MODEL=gpt-5.4      # or LINKROWTH_GEMINI_DRAFT_MODEL=gemini-2.5-pro
+```
+
 ## Evals
 
-The agent ships with an evaluation harness (`agent/evals/`) — a dataset plus tone, category, and AI-judge scorers — so prompt changes can be measured, not vibed.
+The agent ships with an evaluation harness (`agent/evals/`) — a dataset plus category, tone, and AI-judge scorers — so prompt changes can be measured, not vibed. Today it runs the one-shot `core/engage()` path; multi-step evals are a follow-up.
 
 ```bash
 cd agent && npm run eval
@@ -218,7 +224,7 @@ cd agent && npm run eval
 
 - **No scraping, no ToS violations.** Feed access is via a browser extension with the human present — never headless automation.
 - **No autonomous posting.** The agent suggests; the human ships. Always human-in-the-loop.
-- **Earn the infra.** CLI first, then extension + API when feed triage and suggestion jobs needed them. No Kafka / vector DB until a visible failure demands it.
+- **Earn the infra.** CLI first, then extension + API when feed triage and suggestion jobs needed them. The API runs an in-process worker today — no Kafka until a visible failure demands it.
 
 ## Documentation
 
