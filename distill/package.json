@@ -1,0 +1,24 @@
+{
+  "name": "@linkrowth/distill",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline extract → sanitize → (later) distill / index for Linkrowth experience artifacts",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "extract:local": "tsx src/extract-local-git.ts",
+    "extract:github": "tsx src/extract-prs.ts",
+    "sanitize": "tsx src/sanitize/run.ts"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
