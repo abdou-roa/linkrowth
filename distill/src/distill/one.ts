@@ -1,9 +1,11 @@
 import type { LlmRequest } from "../llm/types";
+import { loadCodeDiff, needsCodeDiff } from "./diff";
 import { buildDistillPrompt } from "./prompt";
 import { parseDistillResponse, type DistillOutcome } from "./parse";
 import type { DistillDropRecord, RawExperienceCandidate } from "../types";
 
 type LlmCall = (request: LlmRequest) => Promise<string>;
+export type LoadDiff = (candidate: RawExperienceCandidate) => Promise<string | null>;
 
 function dropFromError(
   candidate: RawExperienceCandidate,
@@ -29,9 +31,11 @@ function isParseError(err: unknown): boolean {
 
 export async function distillOne(
   candidate: RawExperienceCandidate,
-  call: LlmCall
+  call: LlmCall,
+  loadDiff: LoadDiff = loadCodeDiff
 ): Promise<DistillOutcome> {
-  const prompt = buildDistillPrompt(candidate);
+  const diff = needsCodeDiff(candidate) ? await loadDiff(candidate) : null;
+  const prompt = buildDistillPrompt(candidate, { diff });
   let lastError: unknown;
 
   for (let attempt = 0; attempt < 2; attempt++) {

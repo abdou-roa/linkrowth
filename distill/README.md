@@ -50,7 +50,9 @@ Details: [`docs/local-git-ingestion-spec.md`](../docs/local-git-ingestion-spec.m
   → data/experience-index.json
 ```
 
-Distill is 1:1 per sanitized candidate. The model may **drop** a candidate (`D_drop`, empty claimable line, or `shareability=private`). Re-runs skip ids already in `artifacts.json` unless `DISTILL_FORCE=1`.
+Distill is 1:1 per sanitized candidate. If the commit/PR **body is under 80 characters** (typical subject-only local git), distill fetches a **bounded unified diff** (`git diff-tree` for local; GitHub Files API for PRs) and treats that as primary evidence. The model may still **drop** a candidate (`D_drop` for trivial leftover, empty claimable line, or `shareability=private`). Re-runs skip ids already in `artifacts.json` unless `DISTILL_FORCE=1`.
+
+To re-distill previous `D_drop`s after this change, run with `DISTILL_FORCE=1` (or delete those ids from `data/artifacts.json`).
 
 The index embeds `title + domains + stack + problem + approach + tradeoff + claimableLine + paths` (never raw commit/PR bodies). Search is cosine similarity over that file. Rebuild the index if you change provider or embed model.
 
@@ -79,7 +81,7 @@ npm run search -- "postgres suggestion jobs"
 npm test
 ```
 
-Optional env: `DISTILL_LIMIT` (cap candidates this run), `DISTILL_CONCURRENCY` (default 3), `DISTILL_FORCE=1` (re-distill existing ids), `SEARCH_K` (default 5).
+Optional env: `DISTILL_LIMIT` (cap candidates this run), `DISTILL_CONCURRENCY` (default 3), `DISTILL_FORCE=1` (re-distill existing ids, including prior empty-body `D_drop`s), `SEARCH_K` (default 5).
 
 ## Layout
 

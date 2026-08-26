@@ -65,7 +65,7 @@ describe("distillCandidates", () => {
         candidate("exp_gh_keep", "Add multi-step engage"),
         candidate("exp_gh_drop", "WIP"),
       ],
-      { call, existingArtifacts: existing, concurrency: 2 }
+      { call, existingArtifacts: existing, concurrency: 2, loadDiff: async () => null }
     );
 
     assert.equal(artifacts.length, 2);
@@ -96,7 +96,7 @@ describe("distillCandidates", () => {
 
     const { artifacts, dropped } = await distillCandidates(
       [candidate("exp_gh_retry", "Add Gemini client")],
-      { call }
+      { call, loadDiff: async () => null }
     );
 
     assert.equal(n, 2);

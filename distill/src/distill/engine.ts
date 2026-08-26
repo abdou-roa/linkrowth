@@ -1,7 +1,7 @@
 import type { LlmRequest } from "../llm/types";
 import type { DistillDropRecord, ExperienceArtifact, RawExperienceCandidate } from "../types";
 import { envFlag, envInt, mapPool } from "../util/pool";
-import { distillOne } from "./one";
+import { distillOne, type LoadDiff } from "./one";
 
 export type LlmCall = (request: LlmRequest) => Promise<string>;
 
@@ -17,6 +17,7 @@ export interface DistillOptions {
   existingArtifacts?: ExperienceArtifact[];
   force?: boolean;
   limit?: number;
+  loadDiff?: LoadDiff;
   onProgress?: (done: number, total: number, kept: number, dropped: number) => void;
 }
 
@@ -39,7 +40,7 @@ export async function distillCandidates(
   let droppedCount = 0;
 
   const outcomes = await mapPool(work, concurrency, async (candidate) => {
-    const outcome = await distillOne(candidate, options.call);
+    const outcome = await distillOne(candidate, options.call, options.loadDiff);
     done += 1;
     if (outcome.kind === "artifact") kept += 1;
     else droppedCount += 1;
