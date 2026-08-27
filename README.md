@@ -121,12 +121,13 @@ linkrowth/
 ├── agent/        # engage brain — multi-step agents, LLM clients, Postgres runs, evals
 ├── api/          # Express gateway — Bearer auth, suggestion jobs; depends on @linkrowth/agent
 ├── extension/    # Chrome MV3 — feed triage, side panel, Generate comment → API
+├── distill/      # offline experience distillation + vector index (separate worker later)
 ├── helpers/      # schema.sql + migrate.sh (applied on Postgres first boot)
 ├── docs/         # SPEC, multi-step design, schema, integration notes, content strategy
 └── docker-compose.yml   # Postgres + API containers
 ```
 
-Packages are mostly independent. The **API** depends on the **agent** via a local `file:` package (`@linkrowth/agent`). The **extension** talks to the API over HTTP only.
+Packages are mostly independent. The **API** depends on the **agent** via a local `file:` package (`@linkrowth/agent`). The **extension** talks to the API over HTTP only. Offline distillation lives in [`distill/`](./distill/README.md) and stays off the engage hot path.
 
 ## Quick start
 

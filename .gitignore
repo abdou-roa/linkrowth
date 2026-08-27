@@ -6,6 +6,9 @@ agent/.env
 agent/config/user.json
 api/.env
 extension/.env
+distill/.env
+distill/config/repos.local.json
+distill/config/repos.github.json
 
 # Dependencies / build (per package)
 agent/node_modules/
@@ -14,6 +17,9 @@ api/node_modules/
 api/dist/
 extension/node_modules/
 extension/dist/
+distill/node_modules/
+distill/dist/
+distill/data/
 
 # Legacy / junk
 node_modules/

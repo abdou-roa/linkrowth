@@ -1,0 +1,14 @@
+{
+  "author": "Your Name <your.email@example.com>",
+  "repos": [
+    {
+      "path": "/absolute/path/to/cloned/repo",
+      "mode": "merges"
+    },
+    {
+      "path": "/absolute/path/to/linear-history-repo",
+      "mode": "linear",
+      "range": "main"
+    }
+  ]
+}
