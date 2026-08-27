@@ -44,7 +44,19 @@ export interface CreateSuggestionRequest {
   notes?: string;
 }
 
-export type SuggestionJobStatus = "queued" | "running" | "succeeded" | "failed";
+export type SuggestionJobStatus =
+  | "queued"
+  | "running"
+  | "awaiting_clarification"
+  | "succeeded"
+  | "failed";
+
+export interface ClarificationSummary {
+  status: "not_needed" | "pending" | "answered" | string;
+  question?: string | null;
+  reason?: string | null;
+  answer?: string | null;
+}
 
 export interface CreateSuggestionResponse {
   jobId: string;
@@ -65,4 +77,5 @@ export interface GetSuggestionResponse {
   status: SuggestionJobStatus;
   error: string | null;
   run: SuggestionRunSummary | null;
+  clarification: ClarificationSummary | null;
 }

@@ -87,9 +87,32 @@ export interface AnalysisArtifact {
   responseParameters: ResponseParameters;
 }
 
+/**
+ * Human-in-the-loop clarification. Kept separate from AnalysisArtifact so
+ * inference stays auditable and the user's answer can override it.
+ */
+export type ClarificationStatus = "not_needed" | "pending" | "answered";
+
+export interface HumanClarification {
+  status: ClarificationStatus;
+  /** One focused question for the user. Present when status is pending or answered. */
+  question?: string;
+  /** Why this answer is required for a grounded draft. */
+  reason?: string;
+  /** Authoritative user answer. Present when status is answered. */
+  answer?: string;
+  askedAt?: string;
+  answeredAt?: string;
+}
+
 /** Questions the drafter is obligated to address. */
 export function answerableQuestions(analysis: AnalysisArtifact): PostQuestion[] {
   return analysis.postQuestions.filter((q) => q.decision === "answer");
+}
+
+/** True when the pipeline must pause for a user answer before drafting. */
+export function needsClarification(clarification?: HumanClarification): boolean {
+  return clarification?.status === "pending" && Boolean(clarification.question?.trim());
 }
 
 /** Drafter / refiner output: the candidate comment. */
@@ -136,17 +159,26 @@ export interface DraftAttempt {
   findings: CritiqueFinding[];
 }
 
-export type EngageRunStatus = "in_progress" | "ready_for_review";
+export type EngageRunStatus =
+  | "in_progress"
+  | "awaiting_clarification"
+  | "ready_for_review";
 
 /**
  * The blackboard threaded through a multi-step run; each step fills its slot.
- * Pipeline: analyzer → drafter → refiner ↺ drafter. Context is supplied by
- * persistence (loadUserContext); the RAG seam stays in context/, not as a step.
+ * Pipeline: analyzer → [HITL if needed] → drafter → refiner ↺ drafter.
+ * Context is supplied by persistence (loadUserContext); the RAG seam stays in
+ * context/, not as a step.
  */
 export interface EngageState {
   post: Post;
   context?: UserContext;
   analysis?: AnalysisArtifact;
+  /**
+   * Human clarification slot. Filled by the analyzer when a user answer is
+   * required; the answer becomes authoritative input for the drafter.
+   */
+  clarification?: HumanClarification;
   draft?: DraftArtifact;
   /** Rejected drafts and their critiques, accumulated across redraft cycles. */
   feedbackHistory: DraftAttempt[];

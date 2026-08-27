@@ -4,6 +4,7 @@ import { drafterStep } from "../steps/drafter";
 import { refinerStep } from "../steps/refiner";
 import type { EngageResult } from "../core/types";
 import type { EngageState, ReasoningStep, Step } from "../steps/types";
+import { needsClarification } from "../steps/types";
 import type {
   Agent,
   AgentDependencies,
@@ -22,7 +23,8 @@ function createInitialState(input: AgentRunInput): EngageState {
     post: input.post,
     context: input.context,
     draft: undefined,
-    analysis: undefined,
+    analysis: input.analysis,
+    clarification: input.clarification,
     feedbackHistory: [],
     attempts: 1,
     status: "in_progress",
@@ -52,10 +54,29 @@ export class MultiStepEngageAgent implements Agent {
     // 1. Initialize state scoped strictly to this execution run
     let state = createInitialState(input);
 
-    // 2. Step 1: Analyze the post
-    state = await this.executeStep(analyzerStep, state);
+    // 2. Analyze — or resume from a checkpoint when clarification is already answered
+    const resumingWithAnswer =
+      Boolean(input.analysis) && input.clarification?.status === "answered";
 
-    // 3. Step 2: Draft initial comment from the analysis
+    if (!resumingWithAnswer) {
+      state = await this.executeStep(analyzerStep, state);
+
+      // HITL gate: stop before drafting until the user answers
+      if (needsClarification(state.clarification)) {
+        return {
+          agentId: this.id,
+          status: "awaiting_clarification",
+          steps: state.steps,
+          clarification: state.clarification,
+          analysis: state.analysis,
+        };
+      }
+    } else {
+      // Resume: keep status in_progress and continue at the drafter
+      state.status = "in_progress";
+    }
+
+    // 3. Draft initial comment from the analysis (+ answered clarification)
     state = await this.executeStep(drafterStep, state);
 
     // 4. Refine ↔ redraft until approved or attempts are exhausted
@@ -75,8 +96,11 @@ export class MultiStepEngageAgent implements Agent {
 
     return {
       agentId: this.id,
+      status: "completed",
       result: finalizeResult(state),
       steps: state.steps,
+      clarification: state.clarification,
+      analysis: state.analysis,
     };
   }
 

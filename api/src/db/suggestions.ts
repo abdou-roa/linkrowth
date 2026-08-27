@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { getPool } from "./client";
 import type {
+  ClarificationSummary,
   FeedPostInput,
   GetSuggestionResponse,
   SuggestionJobStatus,
@@ -79,7 +80,8 @@ async function findActiveJob(
   }>(
     `SELECT id, post_id, status
      FROM suggestion_jobs
-     WHERE post_id = $1 AND status IN ('queued', 'running')
+     WHERE post_id = $1
+       AND status IN ('queued', 'running', 'awaiting_clarification')
      ORDER BY created_at DESC
      LIMIT 1`,
     [postId]
@@ -158,6 +160,7 @@ export async function getSuggestionJob(
     post_id: string;
     status: SuggestionJobStatus;
     error: string | null;
+    clarification: ClarificationSummary | null;
     suggestion: string | null;
     rationale: string | null;
     category: string | null;
@@ -169,6 +172,7 @@ export async function getSuggestionJob(
        j.post_id,
        j.status,
        j.error,
+       j.clarification,
        r.suggestion,
        r.rationale,
        r.category,
@@ -194,6 +198,7 @@ export async function getSuggestionJob(
     postId: row.post_id,
     status: row.status,
     error: row.error,
+    clarification: row.clarification ?? null,
     run: row.has_run
       ? {
           suggestion: row.suggestion,
@@ -202,5 +207,132 @@ export async function getSuggestionJob(
           agentId: row.agent_id,
         }
       : null,
+  };
+}
+
+/** Checkpoint stored when a job pauses for clarification. */
+export interface JobCheckpoint {
+  agentId: string;
+  analysis: unknown;
+  steps: unknown[];
+}
+
+export interface ResumedSuggestionJob {
+  jobId: string;
+  post: FeedPostInput;
+  checkpoint: JobCheckpoint;
+  clarification: ClarificationSummary;
+}
+
+/**
+ * Atomically claim an awaiting-clarification job for resume: set status to
+ * running and patch clarification with the user's answer.
+ * Returns null if the job is missing, not awaiting clarification, or has no checkpoint.
+ */
+export async function resumeSuggestionJobWithAnswer(
+  jobId: string,
+  answer: string
+): Promise<ResumedSuggestionJob | null> {
+  const answeredAt = new Date().toISOString();
+  const result = await getPool().query<{
+    id: string;
+    clarification: ClarificationSummary | null;
+    checkpoint: JobCheckpoint | null;
+    post_id: string;
+    url: string | null;
+    text: string;
+    author_name: string | null;
+    author_headline: string | null;
+    author_profile_url: string | null;
+    author_username: string | null;
+    likes: number | null;
+    comments_count: number | null;
+    comments: FeedPostInput["comments"] | null;
+    age_text: string | null;
+    extracted_at: Date | null;
+  }>(
+    `UPDATE suggestion_jobs j
+     SET status = 'running',
+         clarification = jsonb_set(
+           jsonb_set(
+             jsonb_set(
+               COALESCE(j.clarification, '{}'::jsonb),
+               '{status}',
+               '"answered"'::jsonb
+             ),
+             '{answer}',
+             to_jsonb($2::text)
+           ),
+           '{answeredAt}',
+           to_jsonb($3::text)
+         ),
+         error = NULL,
+         finished_at = NULL,
+         started_at = COALESCE(j.started_at, NOW())
+     FROM posts p
+     WHERE j.id = $1
+       AND j.status = 'awaiting_clarification'
+       AND j.checkpoint IS NOT NULL
+       AND p.id = j.post_id
+     RETURNING
+       j.id,
+       j.clarification,
+       j.checkpoint,
+       j.post_id,
+       p.url,
+       p.text,
+       p.author_name,
+       p.author_headline,
+       p.author_profile_url,
+       p.author_username,
+       p.likes,
+       p.comments_count,
+       p.comments,
+       p.age_text,
+       p.extracted_at`,
+    [jobId, answer, answeredAt]
+  );
+
+  const row = result.rows[0];
+  if (!row || !row.checkpoint || !row.clarification) return null;
+
+  const checkpoint = row.checkpoint;
+  if (!checkpoint.agentId || checkpoint.analysis == null) return null;
+
+  const post: FeedPostInput = {
+    id: row.post_id,
+    url: row.url ?? undefined,
+    text: row.text,
+    author:
+      row.author_name ||
+      row.author_headline ||
+      row.author_profile_url ||
+      row.author_username
+        ? {
+            name: row.author_name ?? undefined,
+            headline: row.author_headline ?? undefined,
+            profileUrl: row.author_profile_url ?? undefined,
+            username: row.author_username ?? undefined,
+          }
+        : undefined,
+    metrics:
+      row.likes != null || row.comments_count != null
+        ? {
+            likes: row.likes ?? undefined,
+            commentsCount: row.comments_count ?? undefined,
+          }
+        : undefined,
+    comments: Array.isArray(row.comments) ? row.comments : undefined,
+    ageText: row.age_text ?? undefined,
+    extractedAt: row.extracted_at
+      ? new Date(row.extracted_at).toISOString()
+      : new Date().toISOString(),
+  };
+
+  return {
+    jobId: row.id,
+    post,
+    checkpoint,
+    clarification: row.clarification,
   };
 }

@@ -1,9 +1,10 @@
   import { getStepModel } from "../config/llm";
-  import { extractJsonBlock } from "../core/parse";
+  import { parseJsonBlock } from "../core/parse";
   import type { UserContext } from "../core/types";
   import type {
     AnalysisArtifact,
     AuthorSeniority,
+    HumanClarification,
     PostQuestion,
     PostTone,
     QuestionReplyDecision,
@@ -13,6 +14,13 @@
   import type { Step, StepResult } from "./types";
   import type { EngageState, StepDeps } from "./types";
   import { answerableQuestions } from "./types";
+
+  /** Analyzer-only shape before it is mapped onto HumanClarification. */
+  interface ClarificationRequest {
+    needed: boolean;
+    question: string;
+    reason: string;
+  }
 
   // ---------------------------------------------------------------------------
   // Prompt
@@ -64,7 +72,7 @@
   - "isTechnical": true when the headline indicates an engineering, product-engineering, data/ML, or other hands-on technical role. false for founders/execs without a technical signal, recruiters, marketers, sales, HR, coaches, or when the headline is missing/ambiguous.
   - "seniority": "founder" for founder/co-founder/CEO titles, "leadership" for VP/Director/Head-of/Manager titles, "ic" for individual-contributor titles (engineer, designer, analyst, specialist, etc.), "unknown" when the headline is missing or ambiguous.
 
-  QUESTION EXTRACTION RULES:
+  QUESTION EXTRACTION & REFLECTION RULES:
   - Extract EVERY question in the post into "postQuestions" — not just the closing CTA. Include:
     - Sentences ending in "?"
     - Clear interrogative asks without "?", e.g. "Curious how others handle this.", "Wondering if anyone has shipped this."
@@ -76,6 +84,9 @@
   - "omit": not worth answering in a comment — rhetorical devices, stylistic hooks, questions the author immediately answers themselves, self-directed musings, asks aimed at a named person/company, or hypothetical framing that isn't seeking a reply.
 
   Bias toward "omit" when unsure. A LinkedIn comment should answer at most the real reader asks; do not treat every "?" as an obligation.
+
+  REFLECTION (clarification is tied to decision "answer"):
+  After classifying each question, check whether any "answer" question asks for a point of view, lived stance, private failure mode, or concrete practice. If it does, you MUST source that information before drafting can proceed — do not assume the Drafter can cover it with a generic operational observation. Apply HUMAN CLARIFICATION RULES to decide whether USER DOMAIN CONTEXT already holds it or a human ask is required. Questions marked "omit" never trigger clarification.
 
   UNSPOKEN TRADE-OFFS RULES:
   - Only populate this array when the category is "technical".
@@ -98,6 +109,7 @@
   - "insightDirection": The specific command guiding what the drafter must execute.
     - IF POST HAS QUESTIONS: "insightDirection" MUST be an explicit command on HOW to answer or reframe the author's primary question using the user's technical perspective.
       - Example: "Answer their question about scale limits by pointing out that connection-pooling will fail before memory does."
+    - IF A QUESTION REQUIRES PERSONAL INPUT (clarification.needed=true, or USER DOMAIN CONTEXT already supplied the stance): "insightDirection" MUST tell the Drafter to anchor the reply directly to that sourced answer — the user's clarification reply or the matching fact from USER DOMAIN CONTEXT is the ground truth for the stance, practice, or experience the question asked for.
     - IF NO QUESTIONS: Focus on an additive pivot or operational edge case.
       - Example: "Point out that Redis latency limits will eventually bottleneck this architecture at scale."
   - CRITICAL ESCAPE HATCH: If the post is outside USER DOMAIN CONTEXT, set "insightDirection" to a thoughtful response focused purely on the author's thesis and question.
@@ -122,6 +134,36 @@
     Category caps:
     - "achievement" / "informal": default "short"; bump to "standard" only when insightDirection genuinely needs two beats or there is an answerable postQuestion. Never "extended".
     - "technical" + technicalDepth "accessible": same scale as above but never "extended" — accessible insights stay at "short" or "standard".
+
+  HUMAN CLARIFICATION RULES (GROUND TRUTH SOURCING):
+  Decide whether to pause the pipeline and ask the commenter one question before drafting. Default to not asking — pausing a human is expensive.
+
+  Source-of-truth hierarchy (check in this order):
+  - Tier 1 — Injected context: if USER DOMAIN CONTEXT already contains the specific opinion, stance, or lived experience the "answer" question requires, use it. Set needed=false.
+  - Tier 2 — Human clarification: if that stance is absent from USER DOMAIN CONTEXT, set needed=true so the Drafter does not have to guess or fabricate an opinion.
+
+  Set "clarification.needed" to true ONLY when ALL of these hold:
+  1. The post contains a question with decision "answer" (or an insightDirection) that explicitly asks for a personal stance, point of view, lived experience, private failure mode, or concrete practice (e.g., "Do you trust X?", "What's your stack for Y?", "Have you experienced Z?").
+  2. That specific stance, opinion, or experience is NOT already present in USER DOMAIN CONTEXT.
+  3. Drafting without it would force the Drafter to guess or invent a fake personal opinion, metric, or experience.
+  4. The answer directly dictates the core stance of the reply.
+
+  Set needed=false when any of these is true:
+  - The question is an objective technical trade-off or general inquiry that can be answered with general engineering logic without inventing a personal "I/we" story.
+  - USER DOMAIN CONTEXT already contains the user's opinions or background needed to answer.
+  - The post is an achievement or routine update requiring only an observation.
+  - The question is omitted (decision="omit").
+  - You are unsure. Bias toward needed=false.
+
+  QUESTION STRUCTURE (only when needed=true):
+  "question" is shown to the commenter in the UI as the source of truth prompt. They answer in one short reply.
+  - One sentence. One fact. Second person ("you" / "your").
+  - Ground it directly in the post's ask (e.g. name the tool, stance, or practice).
+  - Format as an easily answerable prompt: binary choice, yes/no with reason, or a 1-line stance.
+
+  "reason" is one line for the drafter explaining how their answer will serve as ground truth for the reply.
+
+  When needed is false: set question and reason to "".
 
   OUTPUT FORMAT:
   Return only the JSON object. No markdown fences, no explanation.
@@ -154,6 +196,11 @@
     "responseParameters": {
       "technicalDepth": "high | accessible",
       "suggestedLength": "short | standard | extended"
+    },
+    "clarification": {
+      "needed": false,
+      "question": "",
+      "reason": ""
     }
   }`;
   }
@@ -203,11 +250,49 @@
     }, []);
   }
 
-  function parseAnalysis(raw: string): AnalysisArtifact {
-    const json = extractJsonBlock(raw);
-    const parsed = JSON.parse(json) as AnalysisArtifact & {
-      pivotStrategy?: AnalysisArtifact["pivotStrategy"] & { coreThesis?: unknown };
+  function parseClarificationRequest(raw: unknown): ClarificationRequest {
+    const candidate = (raw ?? {}) as Partial<ClarificationRequest>;
+    const question =
+      typeof candidate.question === "string" ? candidate.question.trim() : "";
+    const reason =
+      typeof candidate.reason === "string" ? candidate.reason.trim() : "";
+    const needed = Boolean(candidate.needed) && question.length > 0;
+
+    return {
+      needed,
+      question: needed ? question : "",
+      reason: needed
+        ? reason || "Needed so the drafter can ground the comment in the user's real answer."
+        : "",
     };
+  }
+
+  function toHumanClarification(
+    request: ClarificationRequest,
+  ): HumanClarification {
+    if (!request.needed) {
+      return { status: "not_needed" };
+    }
+
+    return {
+      status: "pending",
+      question: request.question,
+      reason: request.reason,
+      askedAt: new Date().toISOString(),
+    };
+  }
+
+  function parseAnalysis(raw: string): {
+    analysis: AnalysisArtifact;
+    clarificationRequest: ClarificationRequest;
+  } {
+    const parsed = parseJsonBlock<
+      AnalysisArtifact & {
+        pivotStrategy?: AnalysisArtifact["pivotStrategy"] & { coreThesis?: unknown };
+        clarification?: unknown;
+      }
+    >(raw);
+    const clarificationRequest = parseClarificationRequest(parsed.clarification);
 
     // Keep coreThesis at the top-level contract. Accept the old nested shape so
     // an occasional stale/model response still reaches the drafter correctly.
@@ -280,7 +365,13 @@
       suggestedLength,
     };
 
-    return parsed;
+    // Drop analyzer-only clarification field from the analysis artifact.
+    delete (parsed as { clarification?: unknown }).clarification;
+
+    return {
+      analysis: parsed,
+      clarificationRequest,
+    };
   }
 
   // NOTE: Post.comments isn't populated yet — the extension can't fetch existing
@@ -311,21 +402,29 @@
         maxTokens: 768,
       });
 
-      const analysis = parseAnalysis(raw);
+      const { analysis, clarificationRequest } = parseAnalysis(raw);
+      const clarification = toHumanClarification(clarificationRequest);
+      const awaiting = clarification.status === "pending";
 
       console.log(
         "\n========== ANALYZER OUTPUT ==========\n" +
-          JSON.stringify(analysis, null, 2) +
+          JSON.stringify({ analysis, clarification }, null, 2) +
           "\n=====================================\n",
       );
 
       return {
-        patch: { analysis },
+        patch: {
+          analysis,
+          clarification,
+          ...(awaiting ? { status: "awaiting_clarification" as const } : {}),
+        },
         record: {
           name: "analyze",
           status: "completed",
-          summary: `${analysis.category} · ${analysis.tone} · ${analysis.authorProfile.isTechnical ? "technical author" : "non-technical author"} · ${analysis.responseParameters.technicalDepth}/${analysis.responseParameters.suggestedLength} · ${analysis.coreThesis.slice(0, 80)}`,
-          output: analysis,
+          summary: awaiting
+            ? `clarification needed · ${clarification.question?.slice(0, 80)}`
+            : `${analysis.category} · ${analysis.tone} · ${analysis.authorProfile.isTechnical ? "technical author" : "non-technical author"} · ${analysis.responseParameters.technicalDepth}/${analysis.responseParameters.suggestedLength} · ${analysis.coreThesis.slice(0, 80)}`,
+          output: { analysis, clarification },
         },
       };
     },

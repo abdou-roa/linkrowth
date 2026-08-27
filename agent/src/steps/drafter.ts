@@ -114,6 +114,25 @@ function buildCalibrationSection(analysis: AnalysisArtifact): string {
   }`;
 }
 
+function buildClarificationSection(
+  clarification?: EngageState["clarification"],
+): string | null {
+  if (clarification?.status !== "answered" || !clarification.answer?.trim()) {
+    return null;
+  }
+
+  const question = clarification.question?.trim() || "(question not recorded)";
+  const reason = clarification.reason?.trim();
+
+  return `### HUMAN CLARIFICATION (SOURCE OF TRUTH)
+The commenter answered a clarifying question. Treat their answer as authoritative — it overrides any conflicting inference from the analysis.
+- Question: ${question}
+- Answer: ${clarification.answer.trim()}${
+    reason ? `\n- Why this matters: ${reason}` : ""
+  }
+Ground the comment in this answer. Do not invent a substitute experience or opinion.`;
+}
+
 function formatFinding(finding: CritiqueFinding): string {
   const excerpt = finding.excerpt?.trim()
     ? ` on "${finding.excerpt.trim()}" →`
@@ -161,12 +180,14 @@ function buildSystemPrompt(
   analysis: AnalysisArtifact,
   context?: UserContext,
   feedbackHistory: DraftAttempt[] = [],
+  clarification?: EngageState["clarification"],
 ): string {
   const commenterSection = context ? buildCommenterSection(context) : null;
   const voiceSection = context ? buildVoiceSection(context) : null;
   const substanceSection = context ? buildSubstanceSection(context) : null;
   const guardrailsSection = context ? buildGuardrailsSection(context) : null;
   const tradeoffsSection = buildTradeoffsSection(analysis);
+  const clarificationSection = buildClarificationSection(clarification);
   const feedbackSection = buildFeedbackSection(feedbackHistory);
   const isRevision = feedbackHistory.length > 0;
 
@@ -184,6 +205,8 @@ Your primary goal is to write an interactive, peer-level comment. Respond natura
     `### PLAYBOOK\n${PLAYBOOKS[analysis.category]}`,
 
     buildCalibrationSection(analysis),
+
+    clarificationSection,
 
     tradeoffsSection ? `### UNSPOKEN TRADE-OFFS\n${tradeoffsSection}` : null,
 
@@ -271,7 +294,12 @@ export const drafterStep: Step = {
 
     const raw = await deps.call({
       model: getStepModel("draft"),
-      system: buildSystemPrompt(state.analysis, state.context, state.feedbackHistory),
+      system: buildSystemPrompt(
+        state.analysis,
+        state.context,
+        state.feedbackHistory,
+        state.clarification,
+      ),
       user: buildUserMessage(state),
       maxTokens: 400,
     });

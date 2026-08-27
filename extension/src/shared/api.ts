@@ -49,9 +49,15 @@ export interface SuggestionRunSummary {
 export interface GetSuggestionResponse {
   jobId: string;
   postId: string;
-  status: "queued" | "running" | "succeeded" | "failed" | string;
+  status: "queued" | "running" | "awaiting_clarification" | "succeeded" | "failed" | string;
   error: string | null;
   run: SuggestionRunSummary | null;
+  clarification?: {
+    status?: string;
+    question?: string | null;
+    reason?: string | null;
+    answer?: string | null;
+  } | null;
 }
 
 export interface ApiErrorBody {
@@ -140,10 +146,15 @@ export async function getSuggestion(
   return ok;
 }
 
-const TERMINAL_STATUSES = new Set(["succeeded", "failed"]);
+const SETTLED_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "awaiting_clarification",
+]);
 
 /**
- * Poll GET /v1/suggestions/:jobId until the job finishes or times out.
+ * Poll GET /v1/suggestions/:jobId until the job finishes, pauses for
+ * clarification, or times out.
  */
 export async function waitForSuggestion(
   jobId: string,
@@ -155,7 +166,7 @@ export async function waitForSuggestion(
 
   for (;;) {
     const job = await getSuggestion(jobId);
-    if (TERMINAL_STATUSES.has(job.status)) {
+    if (SETTLED_STATUSES.has(job.status)) {
       return job;
     }
     if (Date.now() - started >= timeoutMs) {
@@ -165,4 +176,48 @@ export async function waitForSuggestion(
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
+}
+
+export interface SubmitClarificationResponse {
+  jobId: string;
+  postId: string;
+  status: string;
+}
+
+/**
+ * PATCH /v1/suggestions/:jobId/clarification — resume a paused job with the
+ * user's answer. Returns 202; caller should poll with waitForSuggestion.
+ */
+export async function submitClarification(
+  jobId: string,
+  answer: string,
+): Promise<SubmitClarificationResponse> {
+  const res = await fetch(
+    `${apiBaseUrl()}/v1/suggestions/${encodeURIComponent(jobId)}/clarification`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${apiKey()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ answer }),
+    },
+  );
+
+  const data = (await res.json().catch(() => ({}))) as
+    | SubmitClarificationResponse
+    | ApiErrorBody;
+
+  if (!res.ok) {
+    const err = data as ApiErrorBody;
+    throw new Error(
+      err.message || err.error || `API error ${res.status}`,
+    );
+  }
+
+  const ok = data as SubmitClarificationResponse;
+  if (!ok.jobId) {
+    throw new Error("API response missing jobId");
+  }
+  return ok;
 }

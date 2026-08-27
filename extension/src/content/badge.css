@@ -100,9 +100,56 @@
   background: #8a1f1f !important;
 }
 
+.linkrowth-generate-btn[data-state="clarification"] {
+  background: #0a66c2 !important;
+}
+
+.linkrowth-generate-btn[data-state="clarification"]:hover:not(:disabled) {
+  background: #004182 !important;
+}
+
 .linkrowth-generate-status {
   font: 12px/1.3 system-ui, sans-serif !important;
   color: #555 !important;
+}
+
+.linkrowth-clarification-panel {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+  flex: 1 1 100% !important;
+  width: 100% !important;
+  margin: 4px 0 2px !important;
+  padding: 8px 10px !important;
+  border-radius: 8px !important;
+  background: #f3f6f8 !important;
+  border: 1px solid #d0d7de !important;
+  box-sizing: border-box !important;
+}
+
+.linkrowth-clarification-q {
+  margin: 0 !important;
+  font: 600 12px/1.4 system-ui, sans-serif !important;
+  color: #191919 !important;
+}
+
+.linkrowth-clarification-answer {
+  width: 100% !important;
+  min-height: 44px !important;
+  resize: vertical !important;
+  box-sizing: border-box !important;
+  padding: 6px 8px !important;
+  border: 1px solid #cfcfcf !important;
+  border-radius: 6px !important;
+  font: 13px/1.4 system-ui, sans-serif !important;
+  color: #191919 !important;
+  background: #fff !important;
+}
+
+.linkrowth-clarification-answer:focus {
+  outline: 2px solid #0a66c2 !important;
+  outline-offset: 1px !important;
+  border-color: #0a66c2 !important;
 }
 
 .linkrowth-native-submit-hidden {

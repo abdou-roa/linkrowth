@@ -3,7 +3,7 @@ import { getActiveProviderConfig } from "./config/llm";
 import { getDatabaseUrl } from "./config/db";
 import { createInterface } from "node:readline";
 import { stdin } from "node:process";
-import { runEngage } from "./persistence/runEngage";
+import { runEngageWithStatus } from "./persistence/runEngage";
 
 function validateEnv(): void {
   getActiveProviderConfig();
@@ -41,7 +41,22 @@ async function readPostFromStdin(): Promise<string> {
 
 async function runEngageCommand(): Promise<void> {
   const text = await readPostFromStdin();
-  const { result, steps, agentId } = await runEngage({ text });
+  const outcome = await runEngageWithStatus({ text });
+
+  if (outcome.kind === "awaiting_clarification") {
+    console.log(`\nAgent: ${outcome.agentId}`);
+    console.log("\nAwaiting clarification:");
+    console.log(outcome.clarification.question);
+    if (outcome.clarification.reason) {
+      console.log(`\nWhy: ${outcome.clarification.reason}`);
+    }
+    console.log(
+      "\n(Workflow paused. Resume support: pass an answered clarification into the agent.)"
+    );
+    return;
+  }
+
+  const { result, steps, agentId } = outcome.run;
 
   console.log(`\nAgent: ${agentId}`);
   console.log("\nCategory:");

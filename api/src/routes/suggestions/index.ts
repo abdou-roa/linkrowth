@@ -1,7 +1,12 @@
 import { Router } from "express";
 import { createSuggestionJob, getSuggestionJob } from "../../db/suggestions";
-import { processSuggestionJob } from "../../services/processSuggestionJob";
 import {
+  claimClarificationResume,
+  continueSuggestionJobAfterClarification,
+  processSuggestionJob,
+} from "../../services/processSuggestionJob";
+import {
+  parseClarificationAnswer,
   parseCreateSuggestionRequest,
   parseJobId,
   ValidationError,
@@ -49,6 +54,50 @@ export function suggestionsRouter(): Router {
       }
       console.error("[api] GET /v1/suggestions/:jobId failed", err);
       res.status(500).json({ error: "internal_error", message: "Failed to load suggestion job" });
+    }
+  });
+
+  router.patch("/:jobId/clarification", async (req, res) => {
+    try {
+      const rawId = req.params.jobId;
+      const jobId = parseJobId(typeof rawId === "string" ? rawId : rawId[0] ?? "");
+      const { answer } = parseClarificationAnswer(req.body);
+
+      const claimed = await claimClarificationResume(jobId, answer);
+      if (!claimed.ok) {
+        const existing = await getSuggestionJob(jobId);
+        if (!existing) {
+          res.status(404).json({ error: "not_found", message: "Suggestion job not found" });
+          return;
+        }
+        res.status(409).json({
+          error: "conflict",
+          message: claimed.error,
+        });
+        return;
+      }
+
+      void continueSuggestionJobAfterClarification(claimed.resumed, answer).catch(
+        (err) => {
+          console.error("[api] resume suggestion job failed", jobId, err);
+        }
+      );
+
+      res.status(202).json({
+        jobId,
+        postId: claimed.resumed.post.id,
+        status: "running",
+      });
+    } catch (err) {
+      if (err instanceof ValidationError) {
+        res.status(400).json({ error: "validation_error", message: err.message });
+        return;
+      }
+      console.error("[api] PATCH /v1/suggestions/:jobId/clarification failed", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to resume suggestion job",
+      });
     }
   });
 

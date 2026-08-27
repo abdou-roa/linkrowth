@@ -1,5 +1,9 @@
 import { JobQueue } from "../shared/queue";
-import { createSuggestion, waitForSuggestion } from "../shared/api";
+import {
+  createSuggestion,
+  submitClarification,
+  waitForSuggestion,
+} from "../shared/api";
 import { MessageType, isExtensionMessage } from "../shared/messages";
 import type { ExtensionMessage, TriageEntry } from "../shared/messages";
 import { scoreFeedPost } from "../shared/scoring";
@@ -60,6 +64,13 @@ async function handleMessage(
     case MessageType.GENERATE_SUGGESTION:
       return enqueueSuggestion(message.feedPostId, message.notes);
 
+    case MessageType.SUBMIT_CLARIFICATION:
+      return enqueueClarificationResume(
+        message.feedPostId,
+        message.jobId,
+        message.answer,
+      );
+
     case MessageType.REMOVE_TRIAGE:
       return removeTriageEntries(message.feedPostIds);
 
@@ -102,6 +113,59 @@ async function removeTriageEntries(
   }
 }
 
+function suggestionResultFromJob(
+  feedPostId: string,
+  job: Awaited<ReturnType<typeof waitForSuggestion>>,
+): Record<string, unknown> {
+  if (job.status === "failed") {
+    return {
+      type: MessageType.GENERATE_SUGGESTION_RESULT,
+      ok: false,
+      feedPostId,
+      jobId: job.jobId,
+      status: job.status,
+      error: job.error || "Suggestion job failed",
+    };
+  }
+
+  if (job.status === "awaiting_clarification") {
+    const question =
+      job.clarification?.question?.trim() ||
+      "The analyzer needs a clarification before drafting.";
+    return {
+      type: MessageType.GENERATE_SUGGESTION_RESULT,
+      ok: false,
+      feedPostId,
+      jobId: job.jobId,
+      status: job.status,
+      question,
+    };
+  }
+
+  const suggestion = job.run?.suggestion?.trim();
+  if (!suggestion) {
+    return {
+      type: MessageType.GENERATE_SUGGESTION_RESULT,
+      ok: false,
+      feedPostId,
+      jobId: job.jobId,
+      status: job.status,
+      error: "Job succeeded but no suggestion was returned",
+    };
+  }
+
+  return {
+    type: MessageType.GENERATE_SUGGESTION_RESULT,
+    ok: true,
+    feedPostId,
+    jobId: job.jobId,
+    status: job.status,
+    suggestion,
+    rationale: job.run?.rationale ?? undefined,
+    category: job.run?.category ?? undefined,
+  };
+}
+
 async function enqueueSuggestion(
   feedPostId: string,
   notes?: string,
@@ -140,40 +204,7 @@ async function enqueueSuggestion(
     });
 
     const job = await waitForSuggestion(created.jobId);
-
-    if (job.status === "failed") {
-      return {
-        type: MessageType.GENERATE_SUGGESTION_RESULT,
-        ok: false,
-        feedPostId,
-        jobId: job.jobId,
-        status: job.status,
-        error: job.error || "Suggestion job failed",
-      };
-    }
-
-    const suggestion = job.run?.suggestion?.trim();
-    if (!suggestion) {
-      return {
-        type: MessageType.GENERATE_SUGGESTION_RESULT,
-        ok: false,
-        feedPostId,
-        jobId: job.jobId,
-        status: job.status,
-        error: "Job succeeded but no suggestion was returned",
-      };
-    }
-
-    return {
-      type: MessageType.GENERATE_SUGGESTION_RESULT,
-      ok: true,
-      feedPostId,
-      jobId: job.jobId,
-      status: job.status,
-      suggestion,
-      rationale: job.run?.rationale ?? undefined,
-      category: job.run?.category ?? undefined,
-    };
+    return suggestionResultFromJob(feedPostId, job);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.warn("%c🔗 Linkrowth", "font-weight:bold", "— suggestion failed ❌", msg);
@@ -181,6 +212,44 @@ async function enqueueSuggestion(
       type: MessageType.GENERATE_SUGGESTION_RESULT,
       ok: false,
       feedPostId,
+      error: msg,
+    };
+  }
+}
+
+async function enqueueClarificationResume(
+  feedPostId: string,
+  jobId: string,
+  answer: string,
+): Promise<Record<string, unknown>> {
+  const trimmed = answer.trim();
+  if (!trimmed) {
+    return {
+      type: MessageType.GENERATE_SUGGESTION_RESULT,
+      ok: false,
+      feedPostId,
+      jobId,
+      error: "Answer is required",
+    };
+  }
+
+  try {
+    await submitClarification(jobId, trimmed);
+    const job = await waitForSuggestion(jobId);
+    return suggestionResultFromJob(feedPostId, job);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn(
+      "%c🔗 Linkrowth",
+      "font-weight:bold",
+      "— clarification resume failed ❌",
+      msg,
+    );
+    return {
+      type: MessageType.GENERATE_SUGGESTION_RESULT,
+      ok: false,
+      feedPostId,
+      jobId,
       error: msg,
     };
   }

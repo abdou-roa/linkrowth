@@ -6,6 +6,9 @@ const NOTES_PLACEHOLDER =
 
 const GENERATE_BTN_CLASS = "linkrowth-generate-btn";
 const STATUS_CLASS = "linkrowth-generate-status";
+const CLARIFICATION_PANEL_CLASS = "linkrowth-clarification-panel";
+const CLARIFICATION_Q_CLASS = "linkrowth-clarification-q";
+const CLARIFICATION_ANSWER_CLASS = "linkrowth-clarification-answer";
 
 /** Open LinkedIn's comment composer and wire Generate comment CTA. */
 export async function prepareGenerateComposer(
@@ -245,7 +248,9 @@ function injectGenerateUi(
   );
   if (existing) {
     existing.dataset.feedPostId = feedPostId;
-    setButtonState(existing, "idle");
+    if (existing.dataset.state !== "clarification") {
+      setButtonState(existing, "idle");
+    }
     return;
   }
 
@@ -272,7 +277,7 @@ function injectGenerateUi(
   btn.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    void onGenerateClick(btn, status, editor);
+    void onGenerateClick(btn, status, editor, actions);
   });
 
   actions.append(btn, status);
@@ -341,9 +346,16 @@ async function onGenerateClick(
   btn: HTMLButtonElement,
   status: HTMLElement,
   editor: HTMLElement,
+  actions: HTMLElement,
 ): Promise<void> {
   const feedPostId = btn.dataset.feedPostId;
   if (!feedPostId) return;
+
+  // Resume path: answer the pending clarification and continue drafting.
+  if (btn.dataset.state === "clarification") {
+    await onClarificationSubmit(btn, status, editor, actions);
+    return;
+  }
 
   const notes = readEditorText(editor).trim();
   setButtonState(btn, "loading");
@@ -355,6 +367,11 @@ async function onGenerateClick(
       feedPostId,
       notes: notes || undefined,
     })) as GenerateSuggestionResultMessage & { ok?: boolean; error?: string };
+
+    if (response?.status === "awaiting_clarification" && response.jobId) {
+      showClarificationUi(btn, status, actions, response);
+      return;
+    }
 
     if (!response?.ok || !response.suggestion) {
       setButtonState(btn, "error");
@@ -377,6 +394,129 @@ async function onGenerateClick(
       error instanceof Error ? error.message : String(error),
     );
   }
+}
+
+function showClarificationUi(
+  btn: HTMLButtonElement,
+  status: HTMLElement,
+  actions: HTMLElement,
+  response: GenerateSuggestionResultMessage,
+): void {
+  const question =
+    response.question?.trim() ||
+    "The analyzer needs a bit more context before drafting.";
+
+  let panel = actions.querySelector<HTMLElement>(
+    `:scope .${CLARIFICATION_PANEL_CLASS}`,
+  );
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.className = CLARIFICATION_PANEL_CLASS;
+
+    const q = document.createElement("p");
+    q.className = CLARIFICATION_Q_CLASS;
+
+    const answer = document.createElement("textarea");
+    answer.className = CLARIFICATION_ANSWER_CLASS;
+    answer.rows = 2;
+    answer.placeholder = "Your answer…";
+
+    panel.append(q, answer);
+    actions.insertBefore(panel, btn);
+  }
+
+  const qEl = panel.querySelector<HTMLElement>(`.${CLARIFICATION_Q_CLASS}`);
+  if (qEl) qEl.textContent = question;
+
+  const answerEl = panel.querySelector<HTMLTextAreaElement>(
+    `.${CLARIFICATION_ANSWER_CLASS}`,
+  );
+  if (answerEl) {
+    answerEl.value = "";
+    answerEl.focus();
+  }
+
+  btn.dataset.jobId = response.jobId ?? "";
+  setButtonState(btn, "clarification");
+  showStatus(status, "Answer to continue");
+}
+
+async function onClarificationSubmit(
+  btn: HTMLButtonElement,
+  status: HTMLElement,
+  editor: HTMLElement,
+  actions: HTMLElement,
+): Promise<void> {
+  const feedPostId = btn.dataset.feedPostId;
+  const jobId = btn.dataset.jobId;
+  if (!feedPostId || !jobId) {
+    setButtonState(btn, "error");
+    showStatus(status, "Missing clarification job — try Generate again");
+    return;
+  }
+
+  const panel = actions.querySelector<HTMLElement>(
+    `:scope .${CLARIFICATION_PANEL_CLASS}`,
+  );
+  const answerEl = panel?.querySelector<HTMLTextAreaElement>(
+    `.${CLARIFICATION_ANSWER_CLASS}`,
+  );
+  const answer = (answerEl?.value ?? "").trim();
+  if (!answer) {
+    showStatus(status, "Enter an answer to continue");
+    answerEl?.focus();
+    return;
+  }
+
+  setButtonState(btn, "loading");
+  showStatus(status, "Generating with your context…");
+
+  try {
+    const response = (await chrome.runtime.sendMessage({
+      type: MessageType.SUBMIT_CLARIFICATION,
+      feedPostId,
+      jobId,
+      answer,
+    })) as GenerateSuggestionResultMessage & { ok?: boolean; error?: string };
+
+    // Rare: analyzer asked again after resume.
+    if (response?.status === "awaiting_clarification" && response.jobId) {
+      showClarificationUi(btn, status, actions, response);
+      return;
+    }
+
+    if (!response?.ok || !response.suggestion) {
+      setButtonState(btn, "error");
+      showStatus(status, response?.error || "Failed to generate suggestion");
+      return;
+    }
+
+    hideClarificationUi(actions, btn);
+    writeEditorText(editor, response.suggestion);
+    setButtonState(btn, "idle");
+    showStatus(
+      status,
+      response.category
+        ? `Ready · ${response.category}`
+        : "Ready — review before posting",
+    );
+  } catch (error) {
+    setButtonState(btn, "error");
+    showStatus(
+      status,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+function hideClarificationUi(
+  actions: HTMLElement,
+  btn: HTMLButtonElement,
+): void {
+  actions
+    .querySelector(`:scope .${CLARIFICATION_PANEL_CLASS}`)
+    ?.remove();
+  delete btn.dataset.jobId;
 }
 
 function writeEditorText(editor: HTMLElement, text: string): void {
@@ -416,7 +556,7 @@ function writeEditorText(editor: HTMLElement, text: string): void {
 
 function setButtonState(
   btn: HTMLButtonElement,
-  state: "idle" | "loading" | "error",
+  state: "idle" | "loading" | "error" | "clarification",
 ): void {
   btn.dataset.state = state;
   btn.disabled = state === "loading";
@@ -427,6 +567,9 @@ function setButtonState(
       break;
     case "error":
       btn.textContent = "Retry generate";
+      break;
+    case "clarification":
+      btn.textContent = "Generate with context";
       break;
     default:
       btn.textContent = "Generate comment";
