@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { ExperienceArtifact } from "../types";
-import { buildIndex, rankIndex } from "./store";
+import { buildIndex, loadIndex, rankIndex, saveIndex } from "./store";
 import { cosineSimilarity, retrievalText } from "./vector";
 
 const artifact = (id: string, line: string, extra: Partial<ExperienceArtifact> = {}): ExperienceArtifact => ({
@@ -69,5 +72,45 @@ describe("vector helpers", () => {
   it("returns 0 cosine for mismatched dimensions", () => {
     assert.equal(cosineSimilarity([1, 0], [1, 0, 0]), 0);
     assert.equal(cosineSimilarity([], [1]), 0);
+  });
+
+  it("persists and reloads the index from a local SQLite db", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "distill-index-"));
+    const dbPath = join(dir, "experience-index.db");
+
+    try {
+      const index = await buildIndex(
+        [
+          artifact("near", "postgres job queue"),
+          artifact("far", "chrome extension badges"),
+        ],
+        async (texts) =>
+          texts.map((t) => (t.includes("postgres") ? [1, 0, 0] : [0, 1, 0])),
+        { provider: "test", model: "fake", dimensions: 3 }
+      );
+
+      saveIndex(dbPath, index);
+      const loaded = loadIndex(dbPath);
+      assert.ok(loaded);
+      assert.equal(loaded.count, 2);
+      assert.equal(loaded.embedding.provider, "test");
+      assert.equal(loaded.embedding.model, "fake");
+      assert.equal(loaded.embedding.dimensions, 3);
+      assert.equal(loaded.items.length, 2);
+
+      const near = loaded.items.find((item) => item.id === "near");
+      assert.ok(near);
+      assert.deepEqual(near.vector, [1, 0, 0]);
+      assert.equal(near.artifact.claimableLine, "postgres job queue");
+
+      const hits = rankIndex(loaded, [1, 0, 0], 1);
+      assert.equal(hits[0]?.artifact.id, "near");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns null when the sqlite index file is missing", () => {
+    assert.equal(loadIndex(join(tmpdir(), "does-not-exist-experience-index.db")), null);
   });
 });

@@ -100,7 +100,7 @@ export interface IndexedExperience {
   artifact: ExperienceArtifact;
 }
 
-/** Local file-backed vector store written to distill/data/. */
+/** In-memory vector index; persisted to distill/data/experience-index.db (SQLite). */
 export interface ExperienceIndex {
   indexedAt: string;
   embedding: EmbeddingMeta;

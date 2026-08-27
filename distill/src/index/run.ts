@@ -1,9 +1,9 @@
 import { embed } from "../llm";
 import { getActiveProviderConfig } from "../config/llm";
 import { dataPath } from "../paths";
-import type { ExperienceArtifact, ExperienceIndex } from "../types";
-import { loadJson, writeJson } from "../util/jsonFile";
-import { buildIndex } from "./store";
+import type { ExperienceArtifact } from "../types";
+import { loadJson } from "../util/jsonFile";
+import { buildIndex, saveIndex } from "./store";
 
 interface ArtifactsFile {
   artifacts?: ExperienceArtifact[];
@@ -31,8 +31,8 @@ async function main(): Promise<void> {
     dimensions: 0,
   });
 
-  const indexPath = dataPath("experience-index.json");
-  writeJson(indexPath, index);
+  const indexPath = dataPath("experience-index.db");
+  saveIndex(indexPath, index);
 
   console.log(`Indexed ${index.count} vector(s), dim=${index.embedding.dimensions}`);
   console.log(`  index → ${indexPath}`);
