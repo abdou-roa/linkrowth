@@ -20,7 +20,7 @@ Details: [`docs/local-git-ingestion-spec.md`](../docs/local-git-ingestion-spec.m
 - Writes under `distill/data/` (gitignored).
 - Never imports `agent/` / `api/` / `extension/`.
 - LLM helpers live in `src/llm/` (same `call()` contract as `agent/src/llm`, copied here so distill stays a separate worker).
-- Agent later reads only `data/experience-index.json` — not extractors.
+- Agent later reads only `data/experience-index.db` — not extractors.
 
 ## Current status
 
@@ -29,7 +29,7 @@ Details: [`docs/local-git-ingestion-spec.md`](../docs/local-git-ingestion-spec.m
 | Extract (local + GitHub) | Implemented |
 | Sanitize / prune | Implemented |
 | Distill (LLM) | Implemented |
-| Embed / index | Implemented (local JSON cosine store) |
+| Embed / index | Implemented (local SQLite cosine store) |
 
 ## Pipeline
 
@@ -47,14 +47,14 @@ Details: [`docs/local-git-ingestion-spec.md`](../docs/local-git-ingestion-spec.m
   → data/artifacts.dropped.json
         ↓ embeddings
 [ Index ]
-  → data/experience-index.json
+  → data/experience-index.db
 ```
 
 Distill is 1:1 per sanitized candidate. If the commit/PR **body is under 80 characters** (typical subject-only local git), distill fetches a **bounded unified diff** (`git diff-tree` for local; GitHub Files API for PRs) and treats that as primary evidence. The model may still **drop** a candidate (`D_drop` for trivial leftover, empty claimable line, or `shareability=private`). Re-runs skip ids already in `artifacts.json` unless `DISTILL_FORCE=1`.
 
 To re-distill previous `D_drop`s after this change, run with `DISTILL_FORCE=1` (or delete those ids from `data/artifacts.json`).
 
-The index embeds `title + domains + stack + problem + approach + tradeoff + claimableLine + paths` (never raw commit/PR bodies). Search is cosine similarity over that file. Rebuild the index if you change provider or embed model.
+The index embeds `title + domains + stack + problem + approach + tradeoff + claimableLine + paths` (never raw commit/PR bodies). Vectors and artifacts land in a local SQLite DB (`experience-index.db`); search is cosine similarity over those rows. Rebuild the index if you change provider or embed model.
 
 ## Setup
 
@@ -76,7 +76,7 @@ npm run extract:github   # → data/raw-prs.json
 npm run sanitize         # adapters + prune → data/candidates.sanitized.json
                          # (+ data/candidates.dropped.json)
 npm run distill          # LLM → data/artifacts.json (+ artifacts.dropped.json)
-npm run index            # embed → data/experience-index.json
+npm run index            # embed → data/experience-index.db
 npm run search -- "postgres suggestion jobs"
 npm test
 ```
