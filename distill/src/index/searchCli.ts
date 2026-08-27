@@ -1,10 +1,8 @@
 import { embedQuery } from "../llm";
 import { getActiveProviderConfig } from "../config/llm";
 import { dataPath } from "../paths";
-import type { ExperienceIndex } from "../types";
-import { loadJson } from "../util/jsonFile";
 import { envInt } from "../util/pool";
-import { rankIndex } from "./store";
+import { loadIndex, rankIndex } from "./store";
 
 async function main(): Promise<void> {
   const query = process.argv.slice(2).join(" ").trim();
@@ -12,11 +10,11 @@ async function main(): Promise<void> {
     throw new Error('Usage: npm run search -- "vector stores drift once write throughput…"');
   }
 
-  const indexPath = dataPath("experience-index.json");
-  const index = loadJson<ExperienceIndex>(indexPath);
+  const indexPath = dataPath("experience-index.db");
+  const index = loadIndex(indexPath);
   if (!index?.items?.length) {
     throw new Error(
-      "No index. Run npm run distill && npm run index first (expected data/experience-index.json)."
+      "No index. Run npm run distill && npm run index first (expected data/experience-index.db)."
     );
   }
 
