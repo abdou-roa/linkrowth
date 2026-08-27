@@ -5,8 +5,8 @@ import type { UserContext } from "../core/types";
 
 /**
  * Static context assembly: read the whole persona from config/user.json.
- * This is the seam RAG replaces later (retrieveContext(post)) — see
- * distill/README.md — without touching the engage core.
+ * Online retrieval enriches this via retrieveContext(post, base) — see
+ * retrieveContext.ts — without touching the engage core.
  */
 export function loadUserContext(): UserContext {
   const configPath = join(getAgentRoot(), "config", "user.json");

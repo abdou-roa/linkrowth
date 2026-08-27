@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { MULTI_STEP_ENGAGE_AGENT_ID } from "../agents/multiStepEngage";
 import { getAgent } from "../agents/registry";
 import { loadUserContext } from "../context/loadUserContext";
+import { retrieveContext } from "../context/retrieveContext";
 import type { Post, UserContext } from "../core/types";
 import type { AnalysisArtifact, HumanClarification } from "../steps/types";
 import {
@@ -72,7 +73,10 @@ export async function runEngageWithStatus(
   post: Post,
   options: RunEngageOptions = {}
 ): Promise<RunEngageOutcome> {
-  const context = options.context ?? loadUserContext();
+  // Context chokepoint: callers that pass context skip retrieval (tests / overrides).
+  // Otherwise load the static persona and enrich it from the experience index.
+  const context =
+    options.context ?? (await retrieveContext(post, loadUserContext()));
   const repository = options.repository ?? createPostgresRunRepository();
   const agent = getAgent(
     options.agentId ?? process.env.LINKROWTH_AGENT ?? MULTI_STEP_ENGAGE_AGENT_ID

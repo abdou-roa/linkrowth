@@ -1,6 +1,8 @@
 # Build from repo root: docker compose build api
 FROM node:22-alpine AS agent-build
 WORKDIR /agent
+# better-sqlite3 needs a toolchain on Alpine (musl); kept only for the build stage.
+RUN apk add --no-cache python3 make g++
 COPY agent/package.json agent/package-lock.json* ./
 RUN npm install
 COPY agent/tsconfig.json ./

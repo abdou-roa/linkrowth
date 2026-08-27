@@ -8,6 +8,8 @@ export interface ProviderConfig {
   analyzeModel: string;
   /** Stronger model for comment drafting; falls back to defaultModel when unset. */
   draftModel: string;
+  /** Embedding model for experience-index retrieval. */
+  embedModel: string;
   apiKeyEnvVar: string;
 }
 
@@ -37,6 +39,11 @@ const DEFAULT_ANALYZE_MODELS: Record<LlmProvider, string> = {
   gemini: "gemini-2.5-pro",
 };
 
+const DEFAULT_EMBED_MODELS: Record<LlmProvider, string> = {
+  openai: "text-embedding-3-small",
+  gemini: "gemini-embedding-001",
+};
+
 const MODEL_ENV_VARS: Record<LlmProvider, string> = {
   openai: "LINKROWTH_OPENAI_MODEL",
   gemini: "LINKROWTH_GEMINI_MODEL",
@@ -50,6 +57,11 @@ const ANALYZE_MODEL_ENV_VARS: Record<LlmProvider, string> = {
 const DRAFT_MODEL_ENV_VARS: Record<LlmProvider, string> = {
   openai: "LINKROWTH_OPENAI_DRAFT_MODEL",
   gemini: "LINKROWTH_GEMINI_DRAFT_MODEL",
+};
+
+const EMBED_MODEL_ENV_VARS: Record<LlmProvider, string> = {
+  openai: "LINKROWTH_OPENAI_EMBED_MODEL",
+  gemini: "LINKROWTH_GEMINI_EMBED_MODEL",
 };
 
 let cached: LlmEnvConfig | null = null;
@@ -78,6 +90,9 @@ function buildProviderConfig(provider: LlmProvider): ProviderConfig {
       DEFAULT_ANALYZE_MODELS[provider],
     draftModel:
       process.env[DRAFT_MODEL_ENV_VARS[provider]]?.trim() || defaultModel,
+    embedModel:
+      process.env[EMBED_MODEL_ENV_VARS[provider]]?.trim() ||
+      DEFAULT_EMBED_MODELS[provider],
     apiKeyEnvVar: PROVIDER_ENV_VARS[provider],
   };
 }
