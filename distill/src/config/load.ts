@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
-import { config as loadDotenv } from "dotenv";
-import { configPath, getDistillRoot } from "../paths";
+import { configPath } from "../paths";
+import { loadEnv } from "./env";
 
-loadDotenv({ path: `${getDistillRoot()}/.env` });
+loadEnv();
 
 export type LocalRepoMode = "merges" | "linear";
 

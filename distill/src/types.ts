@@ -56,4 +56,54 @@ export interface DropRecord {
   title: string;
   source: ExperienceSource;
   repo: string;
+  detail?: string;
+}
+
+export type ArtifactConfidence = "high" | "medium" | "low";
+export type ArtifactShareability = "public" | "anonymized" | "private";
+
+/**
+ * Structured, claimable experience after the LLM distill pass.
+ * This is what gets embedded — never raw commits / PR bodies.
+ */
+export interface ExperienceArtifact {
+  id: string;
+  sourceCandidateId: string;
+  source: ExperienceSource;
+  repo: string;
+  implementationDate: string;
+  title: string;
+  /** Retrieval tags, e.g. "multi-step-agents", "postgres" */
+  domains: string[];
+  stack: string[];
+  problem: string;
+  approach: string;
+  tradeoff: string;
+  /** Sentence the commenter can actually say. Maps later to proofPoints. */
+  claimableLine: string;
+  confidence: ArtifactConfidence;
+  shareability: ArtifactShareability;
+  paths: string[];
+}
+
+export interface DistillDropRecord extends DropRecord {}
+
+export interface EmbeddingMeta {
+  provider: string;
+  model: string;
+  dimensions: number;
+}
+
+export interface IndexedExperience {
+  id: string;
+  vector: number[];
+  artifact: ExperienceArtifact;
+}
+
+/** In-memory vector index; persisted to distill/data/experience-index.db (SQLite). */
+export interface ExperienceIndex {
+  indexedAt: string;
+  embedding: EmbeddingMeta;
+  count: number;
+  items: IndexedExperience[];
 }

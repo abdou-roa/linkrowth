@@ -2,18 +2,26 @@
   "name": "@linkrowth/distill",
   "version": "0.1.0",
   "private": true,
-  "description": "Offline extract → sanitize → (later) distill / index for Linkrowth experience artifacts",
+  "description": "Offline extract → sanitize → distill → index for Linkrowth experience artifacts",
   "license": "MIT",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "extract:local": "tsx src/extract-local-git.ts",
     "extract:github": "tsx src/extract-prs.ts",
-    "sanitize": "tsx src/sanitize/run.ts"
+    "sanitize": "tsx src/sanitize/run.ts",
+    "distill": "tsx src/distill/run.ts",
+    "index": "tsx src/index/run.ts",
+    "search": "tsx src/index/searchCli.ts",
+    "test": "tsx --test src/distill/*.test.ts src/index/*.test.ts"
   },
   "dependencies": {
-    "dotenv": "^17.2.0"
+    "@google/genai": "^1.10.0",
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^17.2.0",
+    "openai": "^5.10.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^24.0.0",
     "tsx": "^4.20.0",
     "typescript": "^5.8.0"
