@@ -231,6 +231,7 @@ cd agent && npm run eval
 
 | Doc | What's inside |
 |---|---|
+| [`docs/AUTOMATION-RESEARCH.md`](./docs/AUTOMATION-RESEARCH.md) | Research: paths toward fuller automation, ToS/account risk, recommended ladder |
 | [`docs/SPEC.md`](./docs/SPEC.md) | Technical & functional spec, episode ladder, decision log |
 | [`docs/MULTI-STEP-AGENT.md`](./docs/MULTI-STEP-AGENT.md) | Agents / steps design (analyzer → drafter → refiner) |
 | [`docs/structure.md`](./docs/structure.md) | Agent package layering and module rules |

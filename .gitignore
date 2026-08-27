@@ -1,6 +1,3 @@
-# Local docs
-docs/
-
 # Secrets / local config (per package — never at repo root)
 agent/.env
 agent/config/user.json
