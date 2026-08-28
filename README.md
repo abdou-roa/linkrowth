@@ -127,7 +127,7 @@ linkrowth/
 └── docker-compose.yml   # Postgres + API containers
 ```
 
-Packages are mostly independent. The **API** depends on the **agent** via a local `file:` package (`@linkrowth/agent`). The **extension** talks to the API over HTTP only. Offline distillation lives in [`distill/`](./distill/README.md) and stays off the engage hot path.
+Offline distillation and retrieval are documented in [`docs/distillation.md`](./docs/distillation.md) and [`docs/retrieval-layer.md`](./docs/retrieval-layer.md). The [`distill/`](./distill/README.md) package runs off the engage hot path.
 
 ## Quick start
 
@@ -231,6 +231,8 @@ cd agent && npm run eval
 
 | Doc | What's inside |
 |---|---|
+| [`docs/distillation.md`](./docs/distillation.md) | Offline LLM distillation — candidates → Experience Artifacts |
+| [`docs/retrieval-layer.md`](./docs/retrieval-layer.md) | Embeddings, SQLite index, cosine similarity, query-time retrieval |
 | [`docs/SPEC.md`](./docs/SPEC.md) | Technical & functional spec, episode ladder, decision log |
 | [`docs/MULTI-STEP-AGENT.md`](./docs/MULTI-STEP-AGENT.md) | Agents / steps design (analyzer → drafter → refiner) |
 | [`docs/structure.md`](./docs/structure.md) | Agent package layering and module rules |
