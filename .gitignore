@@ -1,5 +1,5 @@
-# Local doc drafts (published docs live under docs/)
-docs/posts/
+# Local docs
+docs/
 
 # Secrets / local config (per package — never at repo root)
 agent/.env
