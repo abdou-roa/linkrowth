@@ -2,10 +2,30 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { UserContext } from "../../core/types";
 import type { ExperienceIndex } from "./experience/types";
+import type {
+  RetrievalTrace,
+  RetrievalTraceSink,
+} from "../persistence/retrievalTrace/types";
 import {
   buildRetrievalQuery,
   retrieveContext,
 } from "./retrieveContext";
+
+/** Sink that records the last emitted trace for assertions. */
+function capturingSink(): { sink: RetrievalTraceSink; last: () => RetrievalTrace } {
+  let captured: RetrievalTrace | undefined;
+  return {
+    sink: {
+      record(trace) {
+        captured = trace;
+      },
+    },
+    last: () => {
+      assert.ok(captured, "expected a trace to be emitted");
+      return captured;
+    },
+  };
+}
 
 const baseContext: UserContext = {
   niche: "AI engineering",
@@ -166,5 +186,125 @@ describe("retrieveContext", () => {
       }
     );
     assert.deepEqual(enriched.proofPoints, ["Static proof point"]);
+  });
+});
+
+describe("retrieveContext trace emission", () => {
+  it("emits an injected trace with candidates and index meta", async () => {
+    const { sink, last } = capturingSink();
+    await retrieveContext(
+      { text: "How do you run durable suggestion jobs without Kafka?" },
+      baseContext,
+      {
+        loadIndex: () => fixtureIndex(),
+        embedQuery: async () => [1, 0, 0],
+        k: 3,
+        minScore: 0.3,
+        traceSink: sink,
+      }
+    );
+
+    const trace = last();
+    assert.equal(trace.outcome, "injected");
+    assert.equal(trace.schemaVersion, 1);
+    assert.deepEqual(trace.params, { k: 3, minScore: 0.3 });
+    assert.deepEqual(trace.index, {
+      provider: "test",
+      model: "fake",
+      dimensions: 3,
+      indexedAt: "2026-08-27T00:00:00Z",
+      count: 3,
+    });
+    assert.deepEqual(trace.injectedProofPoints, [
+      "I built a Postgres-backed suggestion job queue with claim semantics.",
+    ]);
+
+    const postgres = trace.candidates.find((c) => c.artifactId === "postgres");
+    assert.ok(postgres?.selected, "postgres artifact should be selected");
+    const priv = trace.candidates.find((c) => c.artifactId === "private");
+    assert.equal(priv?.selected, false);
+    assert.equal(priv?.dropReason, "shareability");
+  });
+
+  it("emits no_survivors when everything is filtered out", async () => {
+    const { sink, last } = capturingSink();
+    await retrieveContext({ text: "unrelated topic" }, baseContext, {
+      loadIndex: () => fixtureIndex(),
+      embedQuery: async () => [0, 0, 1],
+      minScore: 0.3,
+      k: 5,
+      traceSink: sink,
+    });
+    const trace = last();
+    assert.equal(trace.outcome, "no_survivors");
+    assert.deepEqual(trace.injectedProofPoints, []);
+    assert.ok(trace.candidates.length > 0, "candidates should still be recorded");
+    assert.ok(trace.candidates.every((c) => !c.selected));
+  });
+
+  it("emits no_index when the index is missing", async () => {
+    const { sink, last } = capturingSink();
+    await retrieveContext({ text: "anything" }, baseContext, {
+      loadIndex: () => null,
+      embedQuery: async () => {
+        throw new Error("should not embed");
+      },
+      traceSink: sink,
+    });
+    const trace = last();
+    assert.equal(trace.outcome, "no_index");
+    assert.equal(trace.index, null);
+  });
+
+  it("emits embed_failed with index meta when embedding throws", async () => {
+    const { sink, last } = capturingSink();
+    await retrieveContext({ text: "anything" }, baseContext, {
+      loadIndex: () => fixtureIndex(),
+      embedQuery: async () => {
+        throw new Error("provider down");
+      },
+      traceSink: sink,
+    });
+    const trace = last();
+    assert.equal(trace.outcome, "embed_failed");
+    assert.ok(trace.index, "index meta should be present before embed failure");
+    assert.deepEqual(trace.candidates, []);
+  });
+
+  it("emits empty_query when there is nothing to search", async () => {
+    const { sink, last } = capturingSink();
+    await retrieveContext({ text: "   " }, baseContext, {
+      loadIndex: () => fixtureIndex(),
+      embedQuery: async () => [1, 0, 0],
+      traceSink: sink,
+    });
+    const trace = last();
+    assert.equal(trace.outcome, "empty_query");
+    assert.equal(trace.index, null);
+  });
+
+  it("never lets a throwing sink break retrieval", async () => {
+    const throwingSink: RetrievalTraceSink = {
+      record() {
+        throw new Error("sink exploded");
+      },
+    };
+    const enriched = await retrieveContext(
+      { text: "How do you run durable suggestion jobs?" },
+      baseContext,
+      {
+        loadIndex: () => fixtureIndex(),
+        embedQuery: async () => [1, 0, 0],
+        k: 3,
+        minScore: 0.3,
+        traceSink: throwingSink,
+      }
+    );
+    assert.ok(
+      enriched.proofPoints?.includes(
+        "I built a Postgres-backed suggestion job queue with claim semantics."
+      ),
+      "retrieval result must be unaffected by sink failure"
+    );
   });
 });
