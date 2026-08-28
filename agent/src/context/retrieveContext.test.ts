@@ -38,7 +38,7 @@ function fixtureIndex(): ExperienceIndex {
           claimableLine: "I built a Postgres-backed suggestion job queue with claim semantics.",
           confidence: "high",
           shareability: "public",
-          paths: ["helpers/schema.sql"],
+          paths: ["db/migrations/0001_init.sql"],
         },
       },
       {

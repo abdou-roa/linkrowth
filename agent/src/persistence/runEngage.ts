@@ -1,26 +1,27 @@
 import { randomUUID } from "node:crypto";
-import { MULTI_STEP_ENGAGE_AGENT_ID } from "../agents/multiStepEngage";
-import { getAgent } from "../agents/registry";
+import {
+  claimSuggestionJob,
+  failSuggestionJob,
+  pauseSuggestionJobForClarification,
+} from "@linkrowth/db";
+import { multiStepEngageAgent } from "../agents/multiStepEngage";
 import { loadUserContext } from "../context/loadUserContext";
 import { retrieveContext } from "../context/retrieveContext";
 import type { Post, UserContext } from "../core/types";
 import type { AnalysisArtifact, HumanClarification } from "../steps/types";
-import {
-  claimSuggestionJob,
-  failSuggestionJob,
-  JobNotClaimableError,
-  pauseSuggestionJobForClarification,
-} from "./jobStatus";
 import { createPostgresRunRepository } from "./postgresRepository";
 import type { RunRecord, RunRepository } from "./types";
 
-export { MULTI_STEP_ENGAGE_AGENT_ID };
+export class JobNotClaimableError extends Error {
+  constructor(jobId: string) {
+    super(`Suggestion job ${jobId} is not queued`);
+    this.name = "JobNotClaimableError";
+  }
+}
 
 export interface RunEngageOptions {
   context?: UserContext;
   repository?: RunRepository;
-  /** Which agent pipeline to run. Defaults to multi-step (override via agentId or LINKROWTH_AGENT). */
-  agentId?: string;
   /** Existing suggestion_jobs row from the API. Skips claim when the caller already claimed it. */
   jobId?: string;
   /** When true with jobId, skip the queued → running claim (caller already claimed). */
@@ -36,7 +37,6 @@ export type RunEngageOutcome =
   | {
       kind: "awaiting_clarification";
       jobId?: string;
-      agentId: string;
       clarification: HumanClarification;
       steps: RunRecord["steps"];
     };
@@ -96,9 +96,6 @@ export async function runEngageWithStatus(
     );
   }
   const repository = options.repository ?? createPostgresRunRepository();
-  const agent = getAgent(
-    options.agentId ?? process.env.LINKROWTH_AGENT ?? MULTI_STEP_ENGAGE_AGENT_ID
-  );
   const { jobId } = options;
 
   if (jobId && !options.skipClaim) {
@@ -111,7 +108,7 @@ export async function runEngageWithStatus(
   const postId = post.id ?? randomUUID();
 
   try {
-    const outcome = await agent.run({
+    const outcome = await multiStepEngageAgent.run({
       post,
       context,
       clarification: options.clarification,
@@ -127,7 +124,6 @@ export async function runEngageWithStatus(
 
       if (jobId) {
         await pauseSuggestionJobForClarification(jobId, {
-          agentId: outcome.agentId,
           analysis: outcome.analysis,
           clarification: outcome.clarification,
           steps: outcome.steps,
@@ -137,7 +133,6 @@ export async function runEngageWithStatus(
       return {
         kind: "awaiting_clarification",
         jobId,
-        agentId: outcome.agentId,
         clarification: outcome.clarification,
         steps: outcome.steps,
       };
@@ -153,7 +148,6 @@ export async function runEngageWithStatus(
       id: randomUUID(),
       jobId,
       postId,
-      agentId: outcome.agentId,
       post: { ...post, id: postId },
       result: outcome.result,
       steps: outcome.steps,

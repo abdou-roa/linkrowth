@@ -13,6 +13,8 @@ distill/config/repos.github.json
 # Dependencies / build (per package)
 agent/node_modules/
 agent/dist/
+db/node_modules/
+db/dist/
 api/node_modules/
 api/dist/
 extension/node_modules/

@@ -10,8 +10,9 @@ services:
       - "5432:5432"
     volumes:
       - linkrowth_pg:/var/lib/postgresql/data
-      # Runs once on first DB init (empty volume). Re-run anytime with: ./helpers/migrate.sh
-      - ./helpers/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      # Runs ordered migrations once on first DB init (empty volume).
+      # Re-run idempotently anytime with: ./helpers/migrate.sh
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U linkrowth -d linkrowth"]
       interval: 5s
@@ -38,7 +39,6 @@ services:
       NODE_ENV: production
       # Must use the compose service hostname, not localhost from api/.env
       DATABASE_URL: postgresql://linkrowth:linkrowth@postgres:5432/linkrowth
-      LINKROWTH_AGENT: multi_step_engage
       LINKROWTH_PROVIDER: ${LINKROWTH_PROVIDER:-openai}
       LINKROWTH_OPENAI_MODEL: ${LINKROWTH_OPENAI_MODEL:-gpt-4o-mini}
       LINKROWTH_GEMINI_MODEL: ${LINKROWTH_GEMINI_MODEL:-gemini-2.5-flash}

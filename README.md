@@ -53,7 +53,7 @@ engage(post, context) → { suggestion, rationale }
 
 **Invariant:** this signature stays stable across every Episode. New layers wrap it; they never change it.
 
-Today the default runtime path is no longer a single LLM call — it is a **multi-step agent** (`analyze → draft → refine`) that still returns the same `{ suggestion, rationale }` shape. The pure one-shot `engage()` remains available via `LINKROWTH_AGENT=one_shot_engage`.
+The runtime path is a **multi-step agent** (`analyze → draft → refine`) that still returns the same `{ suggestion, rationale }` shape.
 
 ## The Episode ladder
 
@@ -87,15 +87,12 @@ Each Episode adds exactly one layer, and only when the previous one has a *demon
                                        ▼
                         agent/  multi_step_engage (default)
                         analyze → draft → refine  (reject → redraft, max 2)
-                        (one_shot_engage still available)
                                        │
                                        ▼
                               Postgres (posts + suggestion_jobs + suggestion_runs)
 ```
 
 ## Multi-step engage pipeline
-
-Default agent id: `multi_step_engage` (override with `LINKROWTH_AGENT`).
 
 ```text
 post + UserContext
@@ -118,11 +115,12 @@ post + UserContext
 
 ```text
 linkrowth/
-├── agent/        # engage brain — multi-step agents, LLM clients, Postgres runs, evals
-├── api/          # Express gateway — Bearer auth, suggestion jobs; depends on @linkrowth/agent
+├── agent/        # engage brain — multi-step pipeline, LLM clients, run orchestration, evals
+├── api/          # Express gateway — Bearer auth, suggestion jobs; depends on agent + db
+├── db/           # @linkrowth/db — Postgres pool, queries, migrations, and seeds
 ├── extension/    # Chrome MV3 — feed triage, side panel, Generate comment → API
 ├── distill/      # offline experience distillation + vector index (separate worker later)
-├── helpers/      # schema.sql + migrate.sh (applied on Postgres first boot)
+├── helpers/      # backward-compatible migrate.sh entrypoint
 ├── docs/         # SPEC, multi-step design, schema, integration notes, content strategy
 └── docker-compose.yml   # Postgres + API containers
 ```
@@ -141,7 +139,7 @@ cp .env.example .env                           # add your API key (+ DATABASE_UR
 cp config/user.example.json config/user.json   # edit voice notes, samples, substance
 npm install
 
-# From repo root: start Postgres, then apply helpers/schema.sql
+# From repo root: start Postgres, then apply db/migrations in order
 # docker compose up -d
 # ./helpers/migrate.sh
 
@@ -157,18 +155,11 @@ Paste a post at the prompt, or pipe one in:
 echo "Your post text here…" | npm run engage
 ```
 
-Swap pipelines without code changes:
-
-```bash
-LINKROWTH_AGENT=one_shot_engage npm run engage   # single LLM call
-# default: multi_step_engage
-```
-
 ### 2. API (the gateway)
 
 ```bash
 # From repo root — Postgres + API together.
-# helpers/schema.sql is applied automatically on first Postgres boot.
+# db/migrations/*.sql are applied automatically on first Postgres boot.
 docker compose up -d --build
 
 curl http://localhost:4000/health              # {"ok":true,"service":"linkrowth-api",…}

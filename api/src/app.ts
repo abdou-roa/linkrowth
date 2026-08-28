@@ -1,5 +1,5 @@
 import express from "express";
-import { checkDatabase } from "./db/client";
+import { checkDatabase } from "@linkrowth/db";
 import { requireApiKey } from "./middleware/auth";
 import { suggestionsRouter } from "./routes/suggestions";
 
