@@ -396,4 +396,5 @@ sqlite3 distill/data/experience-index.db \
 ## Related docs
 
 - [`distillation.md`](./distillation.md) — offline LLM artifact production
+- [`retrieval-matching-design.md`](./retrieval-matching-design.md) — review of the current cosine baseline and proposed schema-aware hybrid matching
 - [`distill/README.md`](../distill/README.md) — setup and commands
