@@ -12,6 +12,11 @@ import {
   pauseSuggestionJobForClarification,
 } from "./jobStatus";
 import { createPostgresRunRepository } from "./postgresRepository";
+import { createRetrievalTraceRepository } from "./retrievalTrace/repository";
+import type {
+  RetrievalTrace,
+  RetrievalTraceRepository,
+} from "./retrievalTrace/types";
 import type { RunRecord, RunRepository } from "./types";
 
 export { MULTI_STEP_ENGAGE_AGENT_ID };
@@ -19,6 +24,8 @@ export { MULTI_STEP_ENGAGE_AGENT_ID };
 export interface RunEngageOptions {
   context?: UserContext;
   repository?: RunRepository;
+  /** Where retrieval traces are persisted. Defaults to env-selected (LINKROWTH_RETRIEVAL_TRACE). */
+  traceRepository?: RetrievalTraceRepository;
   /** Which agent pipeline to run. Defaults to multi-step (override via agentId or LINKROWTH_AGENT). */
   agentId?: string;
   /** Existing suggestion_jobs row from the API. Skips claim when the caller already claimed it. */
@@ -73,9 +80,15 @@ export async function runEngageWithStatus(
   post: Post,
   options: RunEngageOptions = {}
 ): Promise<RunEngageOutcome> {
+  const traceRepository =
+    options.traceRepository ?? createRetrievalTraceRepository();
+
   // Context chokepoint: callers that pass context skip retrieval (tests / overrides).
   // Otherwise load the static persona and enrich it from the experience index.
+  // Retrieval emits a trace through a capturing sink; we persist it after the run
+  // so it can link to the run id — see the finally block below.
   let context: UserContext;
+  let capturedTrace: RetrievalTrace | undefined;
   if (options.context) {
     context = options.context;
     console.log(
@@ -83,7 +96,13 @@ export async function runEngageWithStatus(
     );
   } else {
     const baseContext = loadUserContext();
-    context = await retrieveContext(post, baseContext);
+    context = await retrieveContext(post, baseContext, {
+      traceSink: {
+        record: (trace) => {
+          capturedTrace = trace;
+        },
+      },
+    });
     const baseProofKeys = new Set(
       (baseContext.proofPoints ?? []).map((line) => line.trim().toLowerCase())
     );
@@ -96,9 +115,9 @@ export async function runEngageWithStatus(
     );
   }
   const repository = options.repository ?? createPostgresRunRepository();
-  const agent = getAgent(
-    options.agentId ?? process.env.LINKROWTH_AGENT ?? MULTI_STEP_ENGAGE_AGENT_ID
-  );
+  const resolvedAgentId =
+    options.agentId ?? process.env.LINKROWTH_AGENT ?? MULTI_STEP_ENGAGE_AGENT_ID;
+  const agent = getAgent(resolvedAgentId);
   const { jobId } = options;
 
   if (jobId && !options.skipClaim) {
@@ -109,6 +128,8 @@ export async function runEngageWithStatus(
   }
 
   const postId = post.id ?? randomUUID();
+  let runIdForTrace: string | undefined;
+  let agentIdForTrace = resolvedAgentId;
 
   try {
     const outcome = await agent.run({
@@ -117,6 +138,7 @@ export async function runEngageWithStatus(
       clarification: options.clarification,
       analysis: options.analysis,
     });
+    agentIdForTrace = outcome.agentId;
 
     if (outcome.status === "awaiting_clarification") {
       if (!outcome.clarification || !outcome.analysis) {
@@ -160,12 +182,31 @@ export async function runEngageWithStatus(
       createdAt,
     };
 
-    return { kind: "completed", run: await repository.save(record) };
+    const saved = await repository.save(record);
+    runIdForTrace = saved.id;
+    return { kind: "completed", run: saved };
   } catch (err) {
     if (jobId && !(err instanceof JobNotClaimableError)) {
       const message = err instanceof Error ? err.message : String(err);
       await failSuggestionJob(jobId, message);
     }
     throw err;
+  } finally {
+    // Best-effort: a trace write must never break the engage flow.
+    if (capturedTrace) {
+      try {
+        await traceRepository.save(capturedTrace, {
+          agentId: agentIdForTrace,
+          runId: runIdForTrace,
+          jobId,
+          postId,
+        });
+      } catch (err) {
+        console.warn(
+          "[runEngage] failed to persist retrieval trace (ignored):",
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
   }
 }
