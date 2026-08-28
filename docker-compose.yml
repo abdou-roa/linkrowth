@@ -44,6 +44,11 @@ services:
       LINKROWTH_GEMINI_MODEL: ${LINKROWTH_GEMINI_MODEL:-gemini-2.5-flash}
       LINKROWTH_OPENAI_ANALYZE_MODEL: ${LINKROWTH_OPENAI_ANALYZE_MODEL:-gpt-5.4}
       LINKROWTH_GEMINI_ANALYZE_MODEL: ${LINKROWTH_GEMINI_ANALYZE_MODEL:-gemini-2.5-pro}
+      # agent/.env may set a host absolute path; override to the mounted container path
+      LINKROWTH_EXPERIENCE_INDEX_DB: /data/experience-index.db
+    volumes:
+      # Offline distill index — not baked into the image (gitignored / rebuilt locally)
+      - ./distill/data/experience-index.db:/data/experience-index.db:ro
     depends_on:
       postgres:
         condition: service_healthy
