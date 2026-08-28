@@ -1,78 +1,31 @@
 import type { PoolClient } from "pg";
 import { getPool } from "./client";
+import { upsertPost } from "./posts";
 import type {
+  ClarificationCheckpointInput,
   ClarificationSummary,
-  FeedPostInput,
-  GetSuggestionResponse,
+  CreatedSuggestionJob,
+  JobCheckpoint,
+  PostInput,
+  ResumedSuggestionJob,
+  SuggestionJobResult,
   SuggestionJobStatus,
   TriageInput,
-} from "../types/suggestions";
+} from "./types";
 
-export interface CreatedJob {
-  jobId: string;
-  postId: string;
-  status: SuggestionJobStatus;
-}
-
-function isUniqueViolation(err: unknown): boolean {
+function isUniqueViolation(error: unknown): boolean {
   return (
-    !!err &&
-    typeof err === "object" &&
-    "code" in err &&
-    String((err as { code: unknown }).code) === "23505"
-  );
-}
-
-async function upsertPost(client: PoolClient, post: FeedPostInput): Promise<void> {
-  const extractedAt = post.extractedAt ? new Date(post.extractedAt) : null;
-  const comments = JSON.stringify(post.comments ?? []);
-
-  await client.query(
-    `INSERT INTO posts (
-       id, url, text,
-       author_name, author_headline, author_profile_url, author_username,
-       likes, comments_count, comments, age_text, extracted_at, updated_at
-     ) VALUES (
-       $1, $2, $3,
-       $4, $5, $6, $7,
-       $8, $9, $10::jsonb, $11, $12, NOW()
-     )
-     ON CONFLICT (id) DO UPDATE SET
-       url = EXCLUDED.url,
-       text = EXCLUDED.text,
-       author_name = EXCLUDED.author_name,
-       author_headline = EXCLUDED.author_headline,
-       author_profile_url = EXCLUDED.author_profile_url,
-       author_username = EXCLUDED.author_username,
-       likes = EXCLUDED.likes,
-       comments_count = EXCLUDED.comments_count,
-       comments = EXCLUDED.comments,
-       age_text = EXCLUDED.age_text,
-       extracted_at = EXCLUDED.extracted_at,
-       updated_at = NOW()`,
-    [
-      post.id,
-      post.url ?? null,
-      post.text,
-      post.author?.name ?? null,
-      post.author?.headline ?? null,
-      post.author?.profileUrl ?? null,
-      post.author?.username ?? null,
-      post.metrics?.likes ?? null,
-      post.metrics?.commentsCount ?? null,
-      comments,
-      post.ageText ?? null,
-      extractedAt && !Number.isNaN(extractedAt.getTime())
-        ? extractedAt.toISOString()
-        : null,
-    ]
+    !!error &&
+    typeof error === "object" &&
+    "code" in error &&
+    String((error as { code: unknown }).code) === "23505"
   );
 }
 
 async function findActiveJob(
   client: PoolClient,
   postId: string
-): Promise<CreatedJob | null> {
+): Promise<CreatedSuggestionJob | null> {
   const result = await client.query<{
     id: string;
     post_id: string;
@@ -87,19 +40,16 @@ async function findActiveJob(
     [postId]
   );
   const row = result.rows[0];
-  if (!row) return null;
-  return { jobId: row.id, postId: row.post_id, status: row.status };
+  return row
+    ? { jobId: row.id, postId: row.post_id, status: row.status }
+    : null;
 }
 
-/**
- * Upsert the feed post and enqueue a suggestion job.
- * If an active (queued/running) job already exists for the post, returns that job.
- */
 export async function createSuggestionJob(
-  post: FeedPostInput,
+  post: PostInput,
   triage?: TriageInput,
   notes?: string
-): Promise<CreatedJob> {
+): Promise<CreatedSuggestionJob> {
   const client = await getPool().connect();
 
   try {
@@ -125,11 +75,9 @@ export async function createSuggestionJob(
       await client.query("COMMIT");
       const row = inserted.rows[0];
       return { jobId: row.id, postId: row.post_id, status: row.status };
-    } catch (err) {
-      if (!isUniqueViolation(err)) {
-        throw err;
-      }
-      // Keep the post upsert; return the existing active job.
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+
       await client.query("ROLLBACK TO SAVEPOINT sp_job");
       const existing = await findActiveJob(client, post.id);
       await client.query("COMMIT");
@@ -140,13 +88,13 @@ export async function createSuggestionJob(
       }
       return existing;
     }
-  } catch (err) {
+  } catch (error) {
     try {
       await client.query("ROLLBACK");
     } catch {
-      /* ignore if no open transaction */
+      // The transaction may already be closed.
     }
-    throw err;
+    throw error;
   } finally {
     client.release();
   }
@@ -154,7 +102,7 @@ export async function createSuggestionJob(
 
 export async function getSuggestionJob(
   jobId: string
-): Promise<GetSuggestionResponse | null> {
+): Promise<SuggestionJobResult | null> {
   const result = await getPool().query<{
     id: string;
     post_id: string;
@@ -164,7 +112,6 @@ export async function getSuggestionJob(
     suggestion: string | null;
     rationale: string | null;
     category: string | null;
-    agent_id: string | null;
     has_run: boolean;
   }>(
     `SELECT
@@ -176,11 +123,10 @@ export async function getSuggestionJob(
        r.suggestion,
        r.rationale,
        r.category,
-       r.agent_id,
        (r.id IS NOT NULL) AS has_run
      FROM suggestion_jobs j
      LEFT JOIN LATERAL (
-       SELECT id, suggestion, rationale, category, agent_id
+       SELECT id, suggestion, rationale, category
        FROM suggestion_runs
        WHERE job_id = j.id
        ORDER BY created_at DESC
@@ -204,31 +150,57 @@ export async function getSuggestionJob(
           suggestion: row.suggestion,
           rationale: row.rationale,
           category: row.category,
-          agentId: row.agent_id,
         }
       : null,
   };
 }
 
-/** Checkpoint stored when a job pauses for clarification. */
-export interface JobCheckpoint {
-  agentId: string;
-  analysis: unknown;
-  steps: unknown[];
+export async function claimSuggestionJob(jobId: string): Promise<boolean> {
+  const result = await getPool().query<{ id: string }>(
+    `UPDATE suggestion_jobs
+     SET status = 'running', started_at = COALESCE(started_at, NOW())
+     WHERE id = $1 AND status = 'queued'
+     RETURNING id`,
+    [jobId]
+  );
+  return result.rowCount !== null && result.rowCount > 0;
 }
 
-export interface ResumedSuggestionJob {
-  jobId: string;
-  post: FeedPostInput;
-  checkpoint: JobCheckpoint;
-  clarification: ClarificationSummary;
+export async function failSuggestionJob(
+  jobId: string,
+  error: string
+): Promise<void> {
+  await getPool().query(
+    `UPDATE suggestion_jobs
+     SET status = 'failed', finished_at = NOW(), error = $2
+     WHERE id = $1`,
+    [jobId, error.slice(0, 2000)]
+  );
 }
 
-/**
- * Atomically claim an awaiting-clarification job for resume: set status to
- * running and patch clarification with the user's answer.
- * Returns null if the job is missing, not awaiting clarification, or has no checkpoint.
- */
+export async function pauseSuggestionJobForClarification(
+  jobId: string,
+  checkpoint: ClarificationCheckpointInput
+): Promise<void> {
+  await getPool().query(
+    `UPDATE suggestion_jobs
+     SET status = 'awaiting_clarification',
+         clarification = $2::jsonb,
+         checkpoint = $3::jsonb,
+         error = NULL,
+         finished_at = NULL
+     WHERE id = $1`,
+    [
+      jobId,
+      JSON.stringify(checkpoint.clarification),
+      JSON.stringify({
+        analysis: checkpoint.analysis,
+        steps: checkpoint.steps,
+      }),
+    ]
+  );
+}
+
 export async function resumeSuggestionJobWithAnswer(
   jobId: string,
   answer: string
@@ -247,7 +219,7 @@ export async function resumeSuggestionJobWithAnswer(
     author_username: string | null;
     likes: number | null;
     comments_count: number | null;
-    comments: FeedPostInput["comments"] | null;
+    comments: PostInput["comments"] | null;
     age_text: string | null;
     extracted_at: Date | null;
   }>(
@@ -294,45 +266,41 @@ export async function resumeSuggestionJobWithAnswer(
   );
 
   const row = result.rows[0];
-  if (!row || !row.checkpoint || !row.clarification) return null;
-
-  const checkpoint = row.checkpoint;
-  if (!checkpoint.agentId || checkpoint.analysis == null) return null;
-
-  const post: FeedPostInput = {
-    id: row.post_id,
-    url: row.url ?? undefined,
-    text: row.text,
-    author:
-      row.author_name ||
-      row.author_headline ||
-      row.author_profile_url ||
-      row.author_username
-        ? {
-            name: row.author_name ?? undefined,
-            headline: row.author_headline ?? undefined,
-            profileUrl: row.author_profile_url ?? undefined,
-            username: row.author_username ?? undefined,
-          }
-        : undefined,
-    metrics:
-      row.likes != null || row.comments_count != null
-        ? {
-            likes: row.likes ?? undefined,
-            commentsCount: row.comments_count ?? undefined,
-          }
-        : undefined,
-    comments: Array.isArray(row.comments) ? row.comments : undefined,
-    ageText: row.age_text ?? undefined,
-    extractedAt: row.extracted_at
-      ? new Date(row.extracted_at).toISOString()
-      : new Date().toISOString(),
-  };
+  if (!row?.checkpoint || !row.clarification) return null;
+  if (row.checkpoint.analysis == null) return null;
 
   return {
     jobId: row.id,
-    post,
-    checkpoint,
+    post: {
+      id: row.post_id,
+      url: row.url ?? undefined,
+      text: row.text,
+      author:
+        row.author_name ||
+        row.author_headline ||
+        row.author_profile_url ||
+        row.author_username
+          ? {
+              name: row.author_name ?? undefined,
+              headline: row.author_headline ?? undefined,
+              profileUrl: row.author_profile_url ?? undefined,
+              username: row.author_username ?? undefined,
+            }
+          : undefined,
+      metrics:
+        row.likes != null || row.comments_count != null
+          ? {
+              likes: row.likes ?? undefined,
+              commentsCount: row.comments_count ?? undefined,
+            }
+          : undefined,
+      comments: Array.isArray(row.comments) ? row.comments : undefined,
+      ageText: row.age_text ?? undefined,
+      extractedAt: row.extracted_at
+        ? new Date(row.extracted_at).toISOString()
+        : new Date().toISOString(),
+    },
+    checkpoint: row.checkpoint,
     clarification: row.clarification,
   };
 }
