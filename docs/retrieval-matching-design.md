@@ -2,7 +2,8 @@
 
 This document records the retrieval-matching review for Linkrowth. It separates
 the behavior that exists today from proposed changes intended to improve how a
-LinkedIn post is matched to claimable engineering experience.
+LinkedIn post and its planned comment angle are matched to claimable
+engineering experience.
 
 For the end-to-end implementation as it exists today, see
 [`retrieval-layer.md`](./retrieval-layer.md). For artifact production and field
@@ -25,14 +26,20 @@ The limitation is the input and ranking design around cosine:
 - the fixed score floor is not calibrated by provider and model;
 - one score cannot distinguish "same situation" from "usable evidence."
 
-The proposed direction is therefore a schema-aware, hybrid, two-stage
-retrieval flow:
+The proposed direction is therefore a schema-aware, staged retrieval flow:
 
 1. filter ineligible artifacts before candidate generation;
 2. generate a broad candidate set using semantic search and lexical search;
 3. combine their rank positions with Reciprocal Rank Fusion (RRF);
-4. rerank the shortlist using separate situation and evidence signals;
-5. inject only candidates that pass the existing truth constraints.
+4. let the analyzer produce the intended problem, response intent, and comment
+   angle;
+5. rerank the shortlist against both the original post and that analysis;
+6. inject only candidates that pass the existing truth constraints.
+
+Broad deterministic candidate generation depends only on the post, so it can
+run before or alongside analysis. Claim selection must wait for analysis:
+relevance is not only "does this artifact resemble the post?" but also "does
+this evidence support the response the agent intends to make?"
 
 This is a design proposal, not a description of already-shipped behavior.
 
@@ -70,6 +77,20 @@ After ranking, it removes:
 
 It then injects at most `LINKROWTH_RETRIEVAL_K` claimable lines into
 `UserContext.proofPoints`.
+
+This entire retrieval and selection pass currently happens in
+`runEngageWithStatus()` before `MultiStepEngageAgent.run()` starts. The
+multi-step agent then runs:
+
+```text
+analyzer → [HITL if needed] → drafter → refiner ↺ drafter
+```
+
+The analyzer therefore does not yet provide input to retrieval ranking. It
+receives an already-enriched `UserContext`, even though its current prompt uses
+persona fields rather than the retrieved `proofPoints`. The proposed behavior
+changes this ordering; it is not a small scoring change inside the existing
+`retrieveContext()` call.
 
 ### What the baseline gets right
 
@@ -156,9 +177,10 @@ tradeoff
 claimableLine
 ```
 
-This vector is a reranking signal. It must not be a hard gate by itself: a post
-may describe only a problem and omit the solution language present in a valid
-experience.
+This vector is a post-analysis reranking signal. It must not be a hard gate by
+itself: a post may describe only a problem and omit the solution language
+present in a valid experience. The analyzer's intended response angle supplies
+additional applicability context without changing what the artifact proves.
 
 ### Lexical document
 
@@ -195,28 +217,36 @@ clearly and continue with static context.
 ```text
 post body + author headline
         │
-        ├─ embed as retrieval query
-        │      └─ cosine against eligible situation vectors
-        │
-        └─ tokenize for FTS5
-               └─ BM25 against eligible lexical documents
-                         │
-                         ▼
-              broad candidate lists
-                         │
-                         ▼
-              Reciprocal Rank Fusion
-                         │
-                         ▼
-                 rerank shortlist
-              situation + evidence fit
-                         │
-                         ▼
-             calibrated accept / abstain
-                         │
-                         ▼
-                claimableLine injection
+        ├─────────────────────────────────────────────┐
+        │                                             │
+        ▼                                             ▼
+deterministic candidate generation                 analyzer
+  ├─ situation cosine                                │
+  ├─ BM25 lexical search                             ├─ problem / thesis
+  └─ RRF fusion                                      ├─ response intent
+        │                                             └─ comment angle
+        ▼                                             │
+ broad fused shortlist                               │
+        │                                             │
+        └──────────────────────┬──────────────────────┘
+                               ▼
+                 post-analysis reranking
+             original post + structured analysis
+               + situation/evidence signals
+                               │
+                               ▼
+                  calibrated accept / abstain
+                               │
+                               ▼
+                    claimableLine selection
+                               │
+                               ▼
+                       drafter → refiner
 ```
+
+The two top branches can run sequentially or concurrently. Their synchronization
+point is mandatory: reranking cannot begin until both the broad shortlist and a
+completed `AnalysisArtifact` are available.
 
 ### Step 1: prefilter eligibility
 
@@ -263,21 +293,49 @@ The rank constant `c`, per-channel candidate counts, and tie-breaking rules
 must be explicit configuration recorded in retrieval traces and selected by
 benchmark results.
 
-### Step 5: schema-aware reranking
+### Step 5: produce structured response analysis
 
-Rerank only the fused shortlist. The reranker evaluates:
+Run the analyzer before final retrieval selection. Its `AnalysisArtifact`
+already carries structured signals that can be mapped into retrieval intent:
 
-1. **Situation fit** — same problem, domain, and operating context.
-2. **Evidence applicability** — the approach and tradeoff can support a useful
-   response to this post.
-3. **Claim alignment** — the `claimableLine` follows from the artifact and is
-   relevant to the post.
-4. **Contradiction or overreach** — the experience would not imply facts the
-   post does not support.
+- **Problem / thesis** — `coreThesis`, relevant `postQuestions`, and
+  `unspokenTradeoffs`;
+- **Response intent** — questions marked for answering, `category`, and desired
+  response parameters;
+- **Comment angle** — `pivotStrategy.acknowledgedPoint` and
+  `pivotStrategy.insightDirection`.
+
+Candidate generation does not need these fields and should not wait on them
+when parallel execution is useful. Reranking and claim selection do.
+
+If analysis pauses for human clarification, do not draft or finalize proof
+points. On resume, use the checkpointed analysis plus the authoritative answer
+when constructing reranking intent. Candidate generation may be reused only
+when its post and index version still match.
+
+### Step 6: schema-aware reranking
+
+Rerank only the fused shortlist, using the original post and the structured
+analysis together. The original post remains necessary ground truth; analysis
+is a fallible interpretation and cannot replace it. The reranker evaluates:
+
+1. **Situation fit** — the artifact concerns the same problem, domain, and
+   operating context expressed by the post.
+2. **Angle fit** — the experience helps execute the analyzer's intended
+   response or answer an identified question, rather than pulling the draft
+   toward a different topic.
+3. **Evidence applicability** — the approach and tradeoff support a useful
+   response given both the post and intended angle.
+4. **Claim alignment** — the `claimableLine` follows from the artifact and is
+   relevant to the post-analysis pair.
+5. **Contradiction or overreach** — neither the post nor analysis justifies
+   stretching the artifact beyond what it records.
 
 The first implementation should use inspectable signals: situation cosine,
-evidence cosine, RRF rank, and exact domain/stack overlap. Do not invent a
-weighted sum without labeled evaluation data.
+evidence cosine against a deterministic analysis-derived query, RRF rank, and
+exact domain/stack overlap. It should record which post and analysis fields
+produced each signal. Do not invent a weighted sum without labeled evaluation
+data.
 
 An LLM or cross-encoder reranker is a later option, not a prerequisite. It adds
 latency, cost, and nondeterminism, so it should be introduced only if the
@@ -285,14 +343,46 @@ deterministic hybrid baseline leaves measurable ranking errors. If introduced,
 it should return structured fit reasons and an abstain decision, not rewrite
 the claim.
 
-### Step 6: calibrated selection
+Analysis is relevance context, not evidence. A statement in
+`AnalysisArtifact` cannot establish that the user built, operated, measured, or
+observed anything. Only the distilled `ExperienceArtifact` can support a
+claimable line, and the reranker may select or reject that line but never
+expand its factual scope.
+
+### Step 7: calibrated selection
 
 Apply model-specific acceptance criteria to the reranked list and keep the
 existing final eligibility checks as defense in depth. Returning no retrieved
 proof point is correct when no candidate is sufficiently relevant.
 
 The final selector should cap at `k`, deduplicate claimable lines, and preserve
-static proof points exactly as it does today.
+static proof points exactly as it does today. Only after this selection should
+the enriched context be supplied to the drafter and refiner.
+
+### Required integration change
+
+The current `runEngageWithStatus()` call to `retrieveContext(post, baseContext)`
+bundles candidate generation, ranking, filtering, and proof-point injection
+before the agent runs. The proposal requires splitting that operation into two
+contracts:
+
+```text
+generateCandidates(post, index) → fused shortlist
+
+selectForAnalysis(post, analysis, shortlist, baseContext)
+  → enriched context + ranking trace
+```
+
+The multi-step orchestrator needs a synchronization stage after analyzer/HITL
+handling and before the first drafter call. `runEngageWithStatus()` can load the
+base persona and initiate deterministic candidate generation, but it cannot
+finalize retrieved `proofPoints` because it does not yet have the analyzer
+output. On resume, the same stage must accept the checkpointed analysis and
+clarification before drafting.
+
+This preserves the context/retrieval module as the owner of matching logic
+while moving final selection to the point in the pipeline where all relevance
+inputs exist.
 
 ---
 
@@ -303,6 +393,15 @@ Post:
 ```text
 Our background jobs sometimes disappear without an error. How are teams
 handling durable retries without adding Kafka?
+```
+
+Analyzer output (abridged):
+
+```text
+problem / thesis: Silent job loss makes retry behavior untrustworthy.
+response intent: Answer with a concrete durability pattern that avoids Kafka.
+comment angle: Acknowledge the operational pain, then offer a smaller-system
+               pattern based on explicit delivery acknowledgement.
 ```
 
 Candidate A:
@@ -325,11 +424,14 @@ Both may receive semantic credit for "Redis." Candidate A should win because:
 
 - its situation vector matches disappearing background jobs;
 - its lexical document matches jobs, retries, and durability;
-- its evidence directly applies to the post's problem;
-- its claim supports a grounded response.
+- its evidence supports the analyzer's explicit-acknowledgement angle;
+- its claim supports that response while staying grounded in the artifact.
 
 Candidate B illustrates why one flattened cosine score can overvalue shared
-technology while missing problem and evidence alignment.
+technology while missing problem, intended-angle, and evidence alignment. If
+the analyzer instead selected a performance-tuning angle, Candidate B might
+become more relevant, but analysis alone still could not make its latency claim
+true; the artifact would remain the evidence.
 
 ---
 
@@ -343,7 +445,8 @@ technology while missing problem and evidence alignment.
 | Eligibility | Applied after a capped raw ranking | Applied before candidate limits and again before injection |
 | Threshold | Global cosine floor, default `0.3` | Provider/model-calibrated accept or abstain criteria |
 | Candidate count | `k × 3` | Recall-driven pool size selected by evaluation |
-| Reranking | None | Structured deterministic rerank; optional model reranker later |
+| Pipeline position | Retrieval and injection finish before analyzer | Candidate generation before/alongside analyzer; reranking and selection after analysis, before drafter |
+| Reranking | None | Original-post + analysis-aware deterministic rerank; optional model reranker later |
 | Storage | One vector plus artifact JSON | Two vectors, lexical index, artifact JSON, schema version |
 | Failure behavior | Falls back to static context | Same graceful fallback |
 
@@ -352,6 +455,7 @@ Expected benefits:
 - fewer matches based only on shared technology or path vocabulary;
 - better recovery of exact stack and domain terms;
 - fewer eligible results lost behind private or low-confidence rows;
+- proof points selected for the actual planned comment angle;
 - clearer reasons for why a proof point was selected;
 - safer abstention when no experience genuinely applies.
 
@@ -366,22 +470,25 @@ Expected costs:
 
 ## Validation plan
 
-Matching changes should be evaluated against a labeled set of real posts and
-experience artifacts. Hand-picked demonstrations are useful for debugging but
-are not enough to choose weights or thresholds.
+Matching changes should be evaluated against labeled triples of real posts,
+analysis outputs, and experience artifacts. Hand-picked demonstrations are
+useful for debugging but are not enough to choose weights or thresholds.
 
 ### Dataset
 
-For each post, label:
+For each post-analysis pair, label:
 
 - artifacts that are relevant situations;
+- artifacts that support the selected response intent and angle;
 - artifacts whose evidence is applicable;
 - artifacts that are safe to inject;
 - cases where retrieval should abstain;
 - hard negatives that share stack terms but solve a different problem.
 
 Include posts with exact technology names, conceptual matches without shared
-vocabulary, problem-only wording, and no matching experience.
+vocabulary, problem-only wording, and no matching experience. Include multiple
+plausible angles for the same post to verify that reranking responds to intent
+without treating analysis as factual evidence.
 
 ### Offline metrics
 
@@ -390,6 +497,7 @@ vocabulary, problem-only wording, and no matching experience.
 | Recall@candidate-N | Did candidate generation retain relevant experiences? |
 | Precision@k | How many final results are genuinely usable? |
 | MRR or nDCG | Did the best evidence rank near the top? |
+| Angle-conditioned precision | Do selected experiences support the analyzed response angle? |
 | Abstention accuracy | Does retrieval avoid injecting on no-match posts? |
 | Safety-filter pass rate | Are private, low-confidence, and empty claims always excluded? |
 
@@ -403,9 +511,10 @@ Record:
 - index schema, provider, model, and dimensions;
 - semantic and lexical ranks;
 - situation and evidence scores;
+- analysis schema/version and the fields used to derive reranking intent;
 - eligibility decisions and drop reasons;
 - final selected artifact IDs;
-- embedding, search, rerank, and total retrieval latency;
+- candidate-generation, analyzer wait, rerank, and total retrieval latency;
 - model reranker cost when applicable.
 
 Do not persist vectors in traces. Artifact IDs and scalar signals are enough to
@@ -417,11 +526,13 @@ Before rollout, the proposed pipeline should:
 
 1. improve precision@k and top-rank quality over the current cosine baseline;
 2. preserve or improve candidate recall;
-3. achieve 100% exclusion of private, low-confidence, and empty-claim
+3. improve angle-conditioned precision over post-only ranking;
+4. achieve 100% exclusion of private, low-confidence, and empty-claim
    artifacts in safety tests;
-4. improve abstention accuracy rather than increasing irrelevant injections;
-5. stay within an agreed retrieval latency budget;
-6. preserve graceful fallback when the index, FTS data, or embedding call is
+5. prove that analyzer-only statements never become claimable evidence;
+6. improve abstention accuracy rather than increasing irrelevant injections;
+7. stay within an agreed retrieval latency budget;
+8. preserve graceful fallback when the index, FTS data, or embedding call is
    unavailable.
 
 ---
@@ -448,7 +559,9 @@ This is independently useful and does not require a new similarity technique.
 
 - build situation and evidence vectors;
 - version and rebuild the SQLite index;
-- retrieve by situation cosine and expose evidence cosine for reranking;
+- retrieve broad candidates by situation cosine;
+- define the deterministic analysis-derived query used later for evidence
+  scoring;
 - compare against the baseline before changing production selection.
 
 ### Phase 3: add lexical retrieval and RRF
@@ -460,9 +573,19 @@ This is independently useful and does not require a new similarity technique.
 
 ### Phase 4: add structured reranking
 
-- begin with deterministic, observable ranking signals;
+- split pre-analysis candidate generation from post-analysis selection;
+- add a multi-step synchronization stage after analyzer/HITL and before
+  drafter;
+- rerank with the original post, structured analysis, and deterministic,
+  observable ranking signals;
 - calibrate selection and abstention by provider/model;
-- consider an LLM or cross-encoder only when evaluation shows a remaining gap.
+- verify resume behavior with checkpointed analysis and clarification.
+
+### Phase 5: consider a model reranker
+
+- add an LLM or cross-encoder only when evaluation shows a remaining gap;
+- require structured reasons and abstention;
+- keep the original post and artifact as factual boundaries.
 
 Each phase should be deployable behind a strategy flag so the current baseline
 can be compared and restored without rebuilding application code.
@@ -476,8 +599,9 @@ can be compared and restored without rebuilding application code.
 - Allowing ranking quality to weaken privacy or confidence constraints.
 - Treating an LLM reranker as the source of truth for whether an experience
   happened.
+- Treating analyzer output as proof that an experience or result happened.
 - Assigning permanent score weights based on intuition alone.
 
 The artifact remains the source of truth. Retrieval only decides which
-already-distilled, claimable experience is relevant enough to offer to the
-engagement agent.
+already-distilled, claimable experience is relevant enough for the analyzed
+comment angle and safe to offer to the drafter and refiner.
