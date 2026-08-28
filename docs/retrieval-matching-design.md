@@ -45,7 +45,7 @@ This is a design proposal, not a description of already-shipped behavior.
 Each `ExperienceArtifact` contains:
 
 | Field group | Fields | Current role |
-|---|---|---|
+| --- | --- | --- |
 | Semantic experience | `title`, `problem`, `approach`, `tradeoff`, `claimableLine` | Included in one embedding |
 | Categorical tags | `domains`, `stack` | Included as plain text in the same embedding |
 | Lexical hints | `paths` | Up to 24 paths included in the same embedding |
@@ -336,7 +336,7 @@ technology while missing problem and evidence alignment.
 ## Behavioral impact
 
 | Area | Current behavior | Proposed behavior |
-|---|---|---|
+| --- | --- | --- |
 | Semantic scoring | One cosine score over all embedded fields | Separate situation and evidence signals |
 | Exact terms | Only indirectly represented in embeddings | Dedicated BM25 lexical channel |
 | Score combination | Not applicable | RRF combines channel ranks, not raw scores |
@@ -386,7 +386,7 @@ vocabulary, problem-only wording, and no matching experience.
 ### Offline metrics
 
 | Metric | Purpose |
-|---|---|
+| --- | --- |
 | Recall@candidate-N | Did candidate generation retain relevant experiences? |
 | Precision@k | How many final results are genuinely usable? |
 | MRR or nDCG | Did the best evidence rank near the top? |
