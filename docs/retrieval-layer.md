@@ -292,15 +292,97 @@ Comment from `select.ts`: *"irrelevant hits are actively harmful"*. Low-similari
 
 5. rawHits = rankIndex(index, queryVector, k * 3)
 
-6. selected = selectClaimableHits(rawHits, { minScore, k })
+6. decisions = evaluateHits(rawHits, { minScore, k })   // keep/drop + dropReason
+   selected  = decisions.filter(d => d.selected)
 
 7. mergeProofPoints(baseContext.proofPoints, claimableLines)
-   → return enriched UserContext
+   → emit trace via sink, return enriched UserContext
 ```
+
+Each return path (including the early returns) emits a retrieval trace through the injected sink — see [Retrieval traces](#retrieval-traces-persistence-for-evalbenchmarking).
 
 **Graceful degradation:** missing index, empty query, embed failure, or zero survivors after filtering all return the static context unchanged. The agent still runs; it just has no retrieved proof points.
 
 Callers that pass `context` explicitly (tests, overrides) **skip retrieval entirely**.
+
+---
+
+## Retrieval traces (persistence for eval/benchmarking)
+
+Every retrieval attempt can emit a **trace** — the query, index metadata, ranked candidates (with per-hit `selected` / `dropReason`), the injected proof points, and timings. This is captured for offline benchmarking and for debugging comment quality back to a specific retrieval, without coupling persistence to the retrieval/scoring logic.
+
+### Decoupling seam
+
+```text
+retrieveContext(post, base, { traceSink })
+    │  depends only on RetrievalTrace (DTO) + RetrievalTraceSink (interface)
+    ▼
+runEngage  → capturing sink → RetrievalTraceRepository (postgres | noop | in-memory)
+```
+
+- Retrieval builds a `RetrievalTrace` DTO and hands it to an injected **sink**; it never imports the database. A throwing sink is swallowed — persistence can never break retrieval.
+- `runEngage` captures the trace, then persists it **after** the run so it can link `run_id` (best-effort; a failed write is logged and ignored).
+- Selection semantics live once in `evaluateHits()` (`experience/select.ts`); the trace's `dropReason` reads from it, so observability never drifts from actual filtering.
+
+### Change tolerance
+
+The schema is deliberately JSONB-heavy so retrieval/scoring changes need **no migration**:
+
+- New knobs → add to `params`.
+- New per-hit scoring signals (rerank score, hybrid weights) → add to `candidates[].signals`.
+- New pipeline stages → emit more `candidates`.
+- A genuine top-level contract change → bump `RETRIEVAL_TRACE_SCHEMA_VERSION` (readers branch on it); old rows stay valid.
+
+### Enabling
+
+Off by default (no-op sink). Set `LINKROWTH_RETRIEVAL_TRACE=1` to persist to Postgres.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `LINKROWTH_RETRIEVAL_TRACE` | unset (off) | `1`/`true`/`yes`/`on` → persist traces to `retrieval_traces` |
+
+### `outcome` values
+
+| Outcome | Meaning |
+|---|---|
+| `empty_query` | No query text (retrieval skipped) |
+| `no_index` | Index missing / empty / failed to load |
+| `embed_failed` | `embedQuery` threw (index meta still recorded) |
+| `no_survivors` | Ranked hits existed but all were filtered out |
+| `injected` | Proof points merged into the context |
+
+### Table `retrieval_traces`
+
+```sql
+CREATE TABLE IF NOT EXISTS retrieval_traces (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id UUID REFERENCES suggestion_runs (id) ON DELETE SET NULL,
+  job_id UUID REFERENCES suggestion_jobs (id) ON DELETE SET NULL,
+  post_id TEXT,
+  agent_id TEXT,
+  schema_version INT NOT NULL,
+  outcome TEXT NOT NULL,
+  query_text TEXT,
+  index_meta JSONB,
+  params JSONB NOT NULL DEFAULT '{}'::jsonb,
+  candidates JSONB NOT NULL DEFAULT '[]'::jsonb,
+  injected_proof_points JSONB NOT NULL DEFAULT '[]'::jsonb,
+  timings JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+`run_id` / `job_id` are nullable (traces survive failed/paused runs; `ON DELETE SET NULL` keeps a trace after its run is deleted). `post_id` has no FK so a trace outlives its post. Only `artifactId` + `score` are stored per hit — never embedding vectors.
+
+### Key source files
+
+| File | Role |
+|---|---|
+| `agent/src/persistence/retrievalTrace/types.ts` | DTO + sink/repository interfaces (the stable contract) |
+| `agent/src/persistence/retrievalTrace/repository.ts` | Postgres / no-op / in-memory repositories + env factory |
+| `agent/src/context/experience/select.ts` | `evaluateHits()` — single source of truth for keep/drop |
+| `agent/src/context/retrieveContext.ts` | Builds + emits the trace per outcome |
+| `agent/src/persistence/runEngage.ts` | Captures the trace, persists after the run (non-fatal) |
 
 ---
 
@@ -335,6 +417,7 @@ npm run search -- "postgres background jobs reliability"
 | `LINKROWTH_EXPERIENCE_INDEX_DB` | `../distill/data/experience-index.db` | Index file path (agent) |
 | `LINKROWTH_RETRIEVAL_K` | `5` | Max proof points after filtering |
 | `LINKROWTH_RETRIEVAL_MIN_SCORE` | `0.3` | Cosine score floor |
+| `LINKROWTH_RETRIEVAL_TRACE` | unset (off) | Persist retrieval traces to `retrieval_traces` when truthy |
 | `SEARCH_K` | `5` | Top hits for `npm run search` (distill CLI) |
 
 Also required: the matching provider API key (`OPENAI_API_KEY` or `GEMINI_API_KEY`).
