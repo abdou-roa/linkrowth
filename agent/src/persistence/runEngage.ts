@@ -75,8 +75,26 @@ export async function runEngageWithStatus(
 ): Promise<RunEngageOutcome> {
   // Context chokepoint: callers that pass context skip retrieval (tests / overrides).
   // Otherwise load the static persona and enrich it from the experience index.
-  const context =
-    options.context ?? (await retrieveContext(post, loadUserContext()));
+  let context: UserContext;
+  if (options.context) {
+    context = options.context;
+    console.log(
+      "[runEngage] context supplied by caller; retrieval skipped"
+    );
+  } else {
+    const baseContext = loadUserContext();
+    context = await retrieveContext(post, baseContext);
+    const baseProofKeys = new Set(
+      (baseContext.proofPoints ?? []).map((line) => line.trim().toLowerCase())
+    );
+    const injected = (context.proofPoints ?? []).filter(
+      (line) => !baseProofKeys.has(line.trim().toLowerCase())
+    );
+    console.log(
+      `[runEngage] retrieval injected ${injected.length} proof point(s) before agent run:`,
+      injected.length > 0 ? injected : "(none — static user.json only)"
+    );
+  }
   const repository = options.repository ?? createPostgresRunRepository();
   const agent = getAgent(
     options.agentId ?? process.env.LINKROWTH_AGENT ?? MULTI_STEP_ENGAGE_AGENT_ID
