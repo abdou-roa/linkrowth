@@ -265,7 +265,7 @@ describe("experience index store (v2)", () => {
     assert.ok(Math.abs(evidenceScore(item, eqVector) - 1.0) < 1e-6);
   });
 
-  it("loads v1 index gracefully (situationVector falls back to vector)", () => {
+  it("returns null for a pre-v2 index file", () => {
     const dir = mkdtempSync(join(tmpdir(), "agent-experience-index-v1-"));
     const dbPath = join(dir, "experience-index.db");
 
@@ -274,21 +274,14 @@ describe("experience index store (v2)", () => {
         {
           id: "v1item",
           vector: [1, 0, 0],
-          situationVector: [1, 0, 0], // will be ignored when writing v1
+          situationVector: [1, 0, 0],
           evidenceVector: [1, 0, 0],
           artifact: artifact("v1item", "v1 artifact"),
         },
       ];
       writeFixtureIndexV1(dbPath, items);
 
-      const loaded = loadIndex(dbPath);
-      assert.ok(loaded);
-      assert.equal(loaded.schemaVersion, 1);
-      const item = loaded.items[0];
-      assert.ok(item);
-      // In v1 fallback, situationVector = vector
-      assert.deepEqual(item.situationVector, item.vector);
-      assert.deepEqual(item.evidenceVector, item.vector);
+      assert.equal(loadIndex(dbPath), null);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

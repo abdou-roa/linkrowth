@@ -430,9 +430,9 @@ describe("retrieveContext split strategy", () => {
     assert.ok(postgres?.evidenceScore !== undefined, "evidenceScore should be annotated");
   });
 
-  it("falls back to static context when strategy=split but index is v1", async () => {
+  it("falls back to static context when index schema is incompatible", async () => {
     const { sink, last } = capturingSink();
-    const v1Index: ExperienceIndex = {
+    const incompatibleIndex: ExperienceIndex = {
       ...fixtureIndex(),
       schemaVersion: 1,
     };
@@ -441,14 +441,13 @@ describe("retrieveContext split strategy", () => {
       { text: "Background jobs dropping under load." },
       baseContext,
       {
-        loadIndex: () => v1Index,
+        loadIndex: () => incompatibleIndex,
         embedQuery: async () => [1, 0, 0],
-        strategy: "split",
         traceSink: sink,
       }
     );
 
-    assert.deepEqual(enriched, baseContext, "should return static context on version mismatch");
+    assert.deepEqual(enriched, baseContext);
     const trace = last();
     assert.equal(trace.outcome, "no_index");
   });

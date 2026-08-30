@@ -51,13 +51,6 @@ async function main(): Promise<void> {
     );
   }
 
-  if (channel !== "single" && index.schemaVersion < 2) {
-    console.warn(
-      `Warning: --channel ${channel} requires a v2 index (schema_version=2). ` +
-        `The loaded index is v${index.schemaVersion}. Run npm run index to rebuild.`
-    );
-  }
-
   const k = envInt("SEARCH_K", 5);
   const vector = await embedQuery(query);
 

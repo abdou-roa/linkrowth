@@ -144,14 +144,14 @@ function warnProviderMismatch(index: ExperienceIndex): void {
   }
 }
 
-function warnStrategyMismatch(strategy: RetrievalStrategy, schemaVersion: number): boolean {
-  if (strategy === "split" && schemaVersion < EXPERIENCE_INDEX_SCHEMA_VERSION) {
+function warnIncompatibleIndex(schemaVersion: number): boolean {
+  if (schemaVersion !== EXPERIENCE_INDEX_SCHEMA_VERSION) {
     console.warn(
-      `[retrieveContext] Strategy "split" requires index schema v${EXPERIENCE_INDEX_SCHEMA_VERSION}, ` +
+      `[retrieveContext] Index schema v${EXPERIENCE_INDEX_SCHEMA_VERSION} required, ` +
         `but the loaded index is v${schemaVersion}. ` +
-        `Rebuild the index with npm run index (distill/). Falling back to static context.`
+        `Rebuild with npm run index (distill/). Falling back to static context.`
     );
-    return true; // mismatch
+    return true;
   }
   return false;
 }
@@ -271,8 +271,7 @@ export async function retrieveContext(
     warnProviderMismatch(index);
   }
 
-  // For the split strategy, require a v2 index.
-  if (strategy === "split" && warnStrategyMismatch(strategy, index.schemaVersion)) {
+  if (warnIncompatibleIndex(index.schemaVersion)) {
     await emit("no_index", { index: indexMeta });
     return baseContext;
   }

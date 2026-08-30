@@ -256,8 +256,9 @@ configurable via `LINKROWTH_RETRIEVAL_CANDIDATE_POOL`). Evidence cosine is
 computed and written to traces when `analysis` is available, but does not gate
 selection in Phase 2. Production selection is identical to `single` in Phase 2.
 
-The `split` strategy requires a v2 index (`schema_version=2`). If the loaded
-index is v1, retrieval falls back to static context with a clear log warning.
+Only schema v2 indexes are accepted. Run `npm run index` (distill/) after
+upgrading; older index files are rejected and retrieval falls back to static
+context with a log warning.
 
 ### Formula
 

@@ -182,7 +182,7 @@ export function saveIndex(dbPath: string, index: ExperienceIndex): void {
   }
 }
 
-/** Load the experience index from a local SQLite file, or null if missing/empty. */
+/** Load a schema-v2 experience index from SQLite, or null if missing/incompatible. */
 export function loadIndex(dbPath: string): ExperienceIndex | null {
   let db: Database.Database;
   try {
@@ -192,74 +192,50 @@ export function loadIndex(dbPath: string): ExperienceIndex | null {
   }
 
   try {
-    // Read meta — use a broad SELECT and fall back gracefully for v1 databases
-    // that have no schema_version column.
-    let meta:
+    const meta = db
+      .prepare(
+        `SELECT indexed_at, provider, model, dimensions, count, schema_version
+         FROM index_meta WHERE id = 1`
+      )
+      .get() as
       | {
           indexed_at: string;
           provider: string;
           model: string;
           dimensions: number;
           count: number;
-          schema_version?: number;
+          schema_version: number;
         }
       | undefined;
 
-    try {
-      meta = db
-        .prepare(
-          `SELECT indexed_at, provider, model, dimensions, count, schema_version
-           FROM index_meta WHERE id = 1`
-        )
-        .get() as typeof meta;
-    } catch {
-      // v1 database: schema_version column absent — retry without it.
-      meta = db
-        .prepare(
-          `SELECT indexed_at, provider, model, dimensions, count
-           FROM index_meta WHERE id = 1`
-        )
-        .get() as typeof meta;
+    if (!meta || meta.schema_version !== EXPERIENCE_INDEX_SCHEMA_VERSION) {
+      return null;
     }
 
-    if (!meta) return null;
-
-    const schemaVersion = meta.schema_version ?? 1;
-
-    let rows: Array<{
-      id: string;
-      vector: Buffer;
-      situation_vector?: Buffer;
-      evidence_vector?: Buffer;
-      artifact_json: string;
-    }>;
-
-    if (schemaVersion >= 2) {
-      rows = db
-        .prepare(
-          `SELECT id, vector, situation_vector, evidence_vector, artifact_json
-           FROM experiences ORDER BY id`
-        )
-        .all() as typeof rows;
-    } else {
-      // v1: only combined vector; use it as a stand-in for situation/evidence.
-      const v1Rows = db
-        .prepare(`SELECT id, vector, artifact_json FROM experiences ORDER BY id`)
-        .all() as Array<{ id: string; vector: Buffer; artifact_json: string }>;
-      rows = v1Rows.map((r) => ({ ...r, situation_vector: r.vector, evidence_vector: r.vector }));
-    }
+    const rows = db
+      .prepare(
+        `SELECT id, vector, situation_vector, evidence_vector, artifact_json
+         FROM experiences ORDER BY id`
+      )
+      .all() as Array<{
+        id: string;
+        vector: Buffer;
+        situation_vector: Buffer;
+        evidence_vector: Buffer;
+        artifact_json: string;
+      }>;
 
     const items: IndexedExperience[] = rows.map((row) => ({
       id: row.id,
       vector: decodeVector(row.vector),
-      situationVector: decodeVector(row.situation_vector ?? row.vector),
-      evidenceVector: decodeVector(row.evidence_vector ?? row.vector),
+      situationVector: decodeVector(row.situation_vector),
+      evidenceVector: decodeVector(row.evidence_vector),
       artifact: JSON.parse(row.artifact_json) as ExperienceArtifact,
     }));
 
     return {
       indexedAt: meta.indexed_at,
-      schemaVersion,
+      schemaVersion: meta.schema_version,
       embedding: {
         provider: meta.provider,
         model: meta.model,
@@ -268,6 +244,9 @@ export function loadIndex(dbPath: string): ExperienceIndex | null {
       count: meta.count,
       items,
     };
+  } catch {
+    // Wrong schema, missing columns, or corrupt file.
+    return null;
   } finally {
     db.close();
   }
