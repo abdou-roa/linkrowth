@@ -2,12 +2,38 @@ import { embedQuery } from "../llm";
 import { getActiveProviderConfig } from "../config/llm";
 import { dataPath } from "../paths";
 import { envInt } from "../util/pool";
-import { loadIndex, rankIndex } from "./store";
+import { loadIndex, rankBySituation, rankIndex } from "./store";
+
+type Channel = "single" | "situation" | "evidence";
+
+function resolveChannel(args: string[]): { query: string; channel: Channel } {
+  let channel: Channel = "single";
+  const queryParts: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--channel" && i + 1 < args.length) {
+      const value = args[++i]!;
+      if (value === "situation" || value === "evidence" || value === "single") {
+        channel = value;
+      } else {
+        console.warn(`Unknown --channel value "${value}". Using "single".`);
+      }
+    } else {
+      queryParts.push(arg!);
+    }
+  }
+
+  return { query: queryParts.join(" ").trim(), channel };
+}
 
 async function main(): Promise<void> {
-  const query = process.argv.slice(2).join(" ").trim();
+  const { query, channel } = resolveChannel(process.argv.slice(2));
+
   if (!query) {
-    throw new Error('Usage: npm run search -- "vector stores drift once write throughput…"');
+    throw new Error(
+      'Usage: npm run search -- [--channel single|situation|evidence] "your query text"'
+    );
   }
 
   const indexPath = dataPath("experience-index.db");
@@ -25,11 +51,31 @@ async function main(): Promise<void> {
     );
   }
 
+  if (channel !== "single" && index.schemaVersion < 2) {
+    console.warn(
+      `Warning: --channel ${channel} requires a v2 index (schema_version=2). ` +
+        `The loaded index is v${index.schemaVersion}. Run npm run index to rebuild.`
+    );
+  }
+
   const k = envInt("SEARCH_K", 5);
   const vector = await embedQuery(query);
-  const hits = rankIndex(index, vector, k);
 
-  console.log(`Top ${hits.length} for: ${query}\n`);
+  const hits =
+    channel === "situation"
+      ? rankBySituation(index, vector, k)
+      : rankIndex(index, vector, k);
+
+  const channelLabel =
+    channel === "situation"
+      ? "situation cosine"
+      : channel === "evidence"
+        ? "evidence cosine (not yet ranked — showing single-vector fallback)"
+        : "single-vector cosine";
+
+  console.log(`Top ${hits.length} for: ${query}`);
+  console.log(`Channel: ${channelLabel}  (index v${index.schemaVersion})\n`);
+
   for (const [i, hit] of hits.entries()) {
     const a = hit.artifact;
     console.log(`${i + 1}. ${a.title}  (${hit.score.toFixed(3)})`);

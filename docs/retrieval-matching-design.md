@@ -66,9 +66,12 @@ block. The index stores one vector and the full artifact JSON per experience.
 
 ### Runtime matching
 
-The runtime query is the post body plus the author's headline when available.
-The agent embeds that query, computes cosine similarity against every artifact
-vector, sorts descending, and keeps `k × 3` raw hits.
+The runtime query is the **cleaned post body** (Tier A, PR #30). The author
+headline is kept as a separate `headline` field on the retrieval trace and is
+never mixed into the embedded query text.
+The agent embeds the cleaned `situationQuery`, computes cosine similarity against every artifact
+vector, sorts descending, and keeps `k × 3` raw hits (single strategy) or a
+wider `k × 4` pool (split strategy).
 
 After ranking, it removes:
 
@@ -557,13 +560,13 @@ This phase is required before tuning thresholds or weights.
 
 This is independently useful and does not require a new similarity technique.
 
-### Phase 2: split semantic fields
+### Phase 2: split semantic fields *(in progress)*
 
-- build situation and evidence vectors;
-- version and rebuild the SQLite index;
-- retrieve broad candidates by situation cosine;
+- build situation and evidence vectors; ✓
+- version and rebuild the SQLite index (schema_version=2); ✓
+- retrieve broad candidates by situation cosine; ✓
 - define the deterministic analysis-derived query used later for evidence
-  scoring;
+  scoring; ✓
 - compare against the baseline before changing production selection.
 
 ### Phase 3: add lexical retrieval and RRF
