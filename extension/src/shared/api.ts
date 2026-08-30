@@ -43,7 +43,6 @@ export interface SuggestionRunSummary {
   suggestion: string | null;
   rationale: string | null;
   category: string | null;
-  agentId: string | null;
 }
 
 export interface GetSuggestionResponse {

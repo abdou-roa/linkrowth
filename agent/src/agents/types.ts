@@ -22,7 +22,6 @@ export interface AgentRunInput {
 export type AgentRunStatus = "completed" | "awaiting_clarification";
 
 export interface AgentRunResult {
-  agentId: string;
   status: AgentRunStatus;
   /** Present when status is "completed". */
   result?: EngageResult;
@@ -38,11 +37,7 @@ export interface AgentDependencies {
   call: LlmCall;
 }
 
-/**
- * A named engagement pipeline. One-shot is a single-step agent; multi-step
- * composes several steps. Selected by the registry and run by persistence.
- */
+/** The single multi-step engagement pipeline. */
 export interface Agent {
-  readonly id: string;
   run(input: AgentRunInput): Promise<AgentRunResult>;
 }

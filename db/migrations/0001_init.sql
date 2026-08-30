@@ -1,5 +1,4 @@
--- Linkrowth API schema: posts, suggestion_jobs, suggestion_runs
--- Source of truth: docs/database-schema.md
+BEGIN;
 
 CREATE TABLE IF NOT EXISTS posts (
   id TEXT PRIMARY KEY,
@@ -33,9 +32,7 @@ CREATE TABLE IF NOT EXISTS suggestion_jobs (
   priority INT NOT NULL DEFAULT 0,
   triage JSONB,
   notes TEXT,
-  -- Analyzer clarification question / answer payload for HITL
   clarification JSONB,
-  -- Analysis + steps checkpoint so a paused job can resume at the drafter
   checkpoint JSONB,
   error TEXT,
   started_at TIMESTAMPTZ,
@@ -43,12 +40,10 @@ CREATE TABLE IF NOT EXISTS suggestion_jobs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Existing DBs created before notes / HITL columns existed
 ALTER TABLE suggestion_jobs ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE suggestion_jobs ADD COLUMN IF NOT EXISTS clarification JSONB;
 ALTER TABLE suggestion_jobs ADD COLUMN IF NOT EXISTS checkpoint JSONB;
 
--- Widen status CHECK for existing DBs (CREATE TABLE IF NOT EXISTS won't alter it)
 DO $$
 DECLARE
   constraint_name TEXT;
@@ -61,10 +56,14 @@ BEGIN
   WHERE rel.relname = 'suggestion_jobs'
     AND nsp.nspname = current_schema()
     AND con.contype = 'c'
-    AND pg_get_constraintdef(con.oid) ILIKE '%status%';
+    AND pg_get_constraintdef(con.oid) ILIKE '%status%'
+  LIMIT 1;
 
   IF constraint_name IS NOT NULL THEN
-    EXECUTE format('ALTER TABLE suggestion_jobs DROP CONSTRAINT %I', constraint_name);
+    EXECUTE format(
+      'ALTER TABLE suggestion_jobs DROP CONSTRAINT %I',
+      constraint_name
+    );
   END IF;
 
   ALTER TABLE suggestion_jobs
@@ -83,7 +82,6 @@ EXCEPTION
     NULL;
 END $$;
 
--- At most one active (queued, running, or awaiting clarification) job per post
 DROP INDEX IF EXISTS suggestion_jobs_one_active_per_post;
 CREATE UNIQUE INDEX suggestion_jobs_one_active_per_post
   ON suggestion_jobs (post_id)
@@ -99,7 +97,6 @@ CREATE TABLE IF NOT EXISTS suggestion_runs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   job_id UUID NOT NULL REFERENCES suggestion_jobs (id) ON DELETE CASCADE,
   post_id TEXT NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
-  agent_id TEXT,
   suggestion TEXT,
   rationale TEXT,
   category TEXT,
@@ -111,6 +108,11 @@ CREATE TABLE IF NOT EXISTS suggestion_runs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS suggestion_runs_job_id_idx ON suggestion_runs (job_id);
-CREATE INDEX IF NOT EXISTS suggestion_runs_post_id_idx ON suggestion_runs (post_id);
-CREATE INDEX IF NOT EXISTS suggestion_runs_created_at_idx ON suggestion_runs (created_at DESC);
+CREATE INDEX IF NOT EXISTS suggestion_runs_job_id_idx
+  ON suggestion_runs (job_id);
+CREATE INDEX IF NOT EXISTS suggestion_runs_post_id_idx
+  ON suggestion_runs (post_id);
+CREATE INDEX IF NOT EXISTS suggestion_runs_created_at_idx
+  ON suggestion_runs (created_at DESC);
+
+COMMIT;

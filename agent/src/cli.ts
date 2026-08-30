@@ -1,6 +1,6 @@
 #!/usr/bin/env node
+import { closePool, getDatabaseUrl } from "@linkrowth/db";
 import { getActiveProviderConfig } from "./config/llm";
-import { getDatabaseUrl } from "./config/db";
 import { createInterface } from "node:readline";
 import { stdin } from "node:process";
 import { runEngageWithStatus } from "./persistence/runEngage";
@@ -44,7 +44,6 @@ async function runEngageCommand(): Promise<void> {
   const outcome = await runEngageWithStatus({ text });
 
   if (outcome.kind === "awaiting_clarification") {
-    console.log(`\nAgent: ${outcome.agentId}`);
     console.log("\nAwaiting clarification:");
     console.log(outcome.clarification.question);
     if (outcome.clarification.reason) {
@@ -56,9 +55,7 @@ async function runEngageCommand(): Promise<void> {
     return;
   }
 
-  const { result, steps, agentId } = outcome.run;
-
-  console.log(`\nAgent: ${agentId}`);
+  const { result, steps } = outcome.run;
   console.log("\nCategory:");
   console.log(result.category);
   console.log("\nSuggestion:");
@@ -91,7 +88,9 @@ async function main(): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error: ${message}`);
-    process.exit(1);
+    process.exitCode = 1;
+  } finally {
+    await closePool();
   }
 }
 

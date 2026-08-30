@@ -1,0 +1,34 @@
+{
+  "name": "@linkrowth/db",
+  "version": "0.1.0",
+  "private": true,
+  "description": "United PostgreSQL persistence module for Linkrowth",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsx --test src/*.test.ts",
+    "migrate": "./scripts/migrate.sh",
+    "seed": "./scripts/seed.sh"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.0",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.20.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
