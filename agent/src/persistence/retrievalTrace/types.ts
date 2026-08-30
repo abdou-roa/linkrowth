@@ -55,7 +55,12 @@ export interface RetrievalTraceHit {
 export interface RetrievalTrace {
   schemaVersion: number;
   outcome: RetrievalOutcome;
-  query: { text: string };
+  query: {
+    /** Situation text that was (or would have been) embedded. */
+    text: string;
+    /** Author headline, recorded but not mixed into `text`. */
+    headline?: string;
+  };
   /** Null when no index was loaded (missing index / empty query). */
   index: RetrievalIndexMeta | null;
   /** Config knobs in effect (k, minScore, and future retrieval params). */

@@ -3,6 +3,12 @@ import { getActiveProviderConfig } from "../config/llm";
 import { embedQuery as defaultEmbedQuery } from "../llm";
 import { getAgentRoot } from "../paths";
 import type { Post, UserContext } from "../core/types";
+import {
+  buildRetrievalQuery,
+  type BuildRetrievalQueryOptions,
+  type QueryConstructionTier,
+  type RetrievalQuery,
+} from "./queryConstruction";
 import { evaluateHits, mergeProofPoints } from "./experience/select";
 import { loadIndex as defaultLoadIndex, rankIndex } from "./experience/store";
 import type { ExperienceIndex, RankedArtifact } from "./experience/types";
@@ -34,6 +40,8 @@ export interface RetrieveContextOptions {
   minScore?: number;
   /** Where to emit the retrieval trace. Defaults to a no-op sink. */
   traceSink?: RetrievalTraceSink;
+  /** Override query construction (`raw` baseline vs Tier A). */
+  queryConstruction?: QueryConstructionTier;
 }
 
 function toIndexMeta(index: ExperienceIndex): RetrievalIndexMeta {
@@ -70,13 +78,12 @@ export function defaultExperienceIndexPath(): string {
   return join(getAgentRoot(), "..", "distill", "data", "experience-index.db");
 }
 
-/** Query text for phase-1 retrieval: author headline (if any) + post body. */
-export function buildRetrievalQuery(post: Post): string {
-  const headline = post.author?.headline?.trim();
-  const body = post.text.trim();
-  if (headline && body) return `Author headline: ${headline}\n\n${body}`;
-  return body || headline || "";
-}
+export {
+  buildRetrievalQuery,
+  type BuildRetrievalQueryOptions,
+  type QueryConstructionTier,
+  type RetrievalQuery,
+};
 
 function warnProviderMismatch(index: ExperienceIndex): void {
   try {
@@ -106,9 +113,20 @@ export async function retrieveContext(
   const k = options.k ?? envInt("LINKROWTH_RETRIEVAL_K", DEFAULT_K);
   const minScore =
     options.minScore ?? envFloat("LINKROWTH_RETRIEVAL_MIN_SCORE", DEFAULT_MIN_SCORE);
-  const params: Record<string, unknown> = { k, minScore };
-
-  const query = buildRetrievalQuery(post);
+  const constructed = buildRetrievalQuery(post, {
+    tier: options.queryConstruction,
+  });
+  const query = constructed.situationQuery;
+  const params: Record<string, unknown> = {
+    k,
+    minScore,
+    queryConstruction: {
+      tier: constructed.tier,
+      fallback: constructed.fallback,
+      rawLength: constructed.rawLength,
+      constructedLength: constructed.constructedLength,
+    },
+  };
 
   /** Emit a trace without ever letting persistence break retrieval. */
   const emit = async (
@@ -123,7 +141,10 @@ export async function retrieveContext(
     const trace: RetrievalTrace = {
       schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
       outcome,
-      query: { text: query },
+      query: {
+        text: query,
+        headline: constructed.headline || undefined,
+      },
       index: extra.index ?? null,
       params,
       candidates: extra.candidates ?? [],

@@ -6,7 +6,9 @@ LinkedIn post and its planned comment angle are matched to claimable
 engineering experience.
 
 For the end-to-end implementation as it exists today, see
-[`retrieval-layer.md`](./retrieval-layer.md). For artifact production and field
+[`retrieval-layer.md`](./retrieval-layer.md). For the query side — how a post
+becomes the embedded query — see
+[`retrieval-query-construction.md`](./retrieval-query-construction.md). For artifact production and field
 semantics, see [`distillation.md`](./distillation.md).
 
 ---

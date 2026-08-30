@@ -113,8 +113,9 @@ describe("buildRetrievalQuery", () => {
       text: "We moved suggestion jobs to Postgres.",
       author: { headline: "Staff Engineer" },
     });
-    assert.match(query, /Staff Engineer/);
-    assert.match(query, /Postgres/);
+    assert.equal(query.headline, "Staff Engineer");
+    assert.match(query.situationQuery, /Postgres/);
+    assert.doesNotMatch(query.situationQuery, /Staff Engineer/);
   });
 });
 
@@ -207,7 +208,16 @@ describe("retrieveContext trace emission", () => {
     const trace = last();
     assert.equal(trace.outcome, "injected");
     assert.equal(trace.schemaVersion, 1);
-    assert.deepEqual(trace.params, { k: 3, minScore: 0.3 });
+    assert.deepEqual(trace.params, {
+      k: 3,
+      minScore: 0.3,
+      queryConstruction: {
+        tier: "a",
+        fallback: false,
+        rawLength: "How do you run durable suggestion jobs without Kafka?".length,
+        constructedLength: "How do you run durable suggestion jobs without Kafka?".length,
+      },
+    });
     assert.deepEqual(trace.index, {
       provider: "test",
       model: "fake",
@@ -224,6 +234,8 @@ describe("retrieveContext trace emission", () => {
     const priv = trace.candidates.find((c) => c.artifactId === "private");
     assert.equal(priv?.selected, false);
     assert.equal(priv?.dropReason, "shareability");
+    assert.equal(trace.query.text, "How do you run durable suggestion jobs without Kafka?");
+    assert.equal(trace.query.headline, undefined);
   });
 
   it("emits no_survivors when everything is filtered out", async () => {
@@ -269,6 +281,41 @@ describe("retrieveContext trace emission", () => {
     assert.equal(trace.outcome, "embed_failed");
     assert.ok(trace.index, "index meta should be present before embed failure");
     assert.deepEqual(trace.candidates, []);
+  });
+
+  it("embeds the situation query and records headline separately", async () => {
+    const { sink, last } = capturingSink();
+    let embedded = "";
+    await retrieveContext(
+      {
+        text: "How do you run durable suggestion jobs without Kafka? 🔥\n\nThoughts?\n#engineering",
+        author: { headline: "VP of Engineering | ex-Stripe" },
+      },
+      baseContext,
+      {
+        loadIndex: () => fixtureIndex(),
+        embedQuery: async (text) => {
+          embedded = text;
+          return [1, 0, 0];
+        },
+        k: 3,
+        minScore: 0.3,
+        traceSink: sink,
+      }
+    );
+
+    assert.equal(embedded, "How do you run durable suggestion jobs without Kafka?");
+    assert.doesNotMatch(embedded, /Stripe/);
+    const trace = last();
+    assert.equal(trace.query.headline, "VP of Engineering | ex-Stripe");
+    assert.equal(trace.query.text, embedded);
+    assert.deepEqual(trace.params.queryConstruction, {
+      tier: "a",
+      fallback: false,
+      rawLength:
+        "How do you run durable suggestion jobs without Kafka? 🔥\n\nThoughts?\n#engineering".length,
+      constructedLength: embedded.length,
+    });
   });
 
   it("emits empty_query when there is nothing to search", async () => {
