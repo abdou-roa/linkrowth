@@ -279,8 +279,7 @@ Authorization: Bearer <API_KEY>
   "run": {
     "suggestion": "…",
     "rationale": "…",
-    "category": null,
-    "agentId": "one_shot_engage"
+    "category": null
   }
 }
 ```
@@ -297,7 +296,6 @@ Authorization: Bearer <API_KEY>
 | `run.suggestion` | string \| null | Generated comment |
 | `run.rationale` | string \| null | |
 | `run.category` | string \| null | |
-| `run.agentId` | string \| null | e.g. engage agent id |
 
 ### Errors
 
@@ -337,5 +335,5 @@ Today steps 2–3 work end-to-end against Postgres; step 3 will keep returning `
 | Doc / path | What |
 | --- | --- |
 | [`README.md`](./README.md) | Run, layout, env, auth overview |
-| [`../helpers/schema.sql`](../helpers/schema.sql) | `posts`, `suggestion_jobs`, `suggestion_runs` |
+| [`../db/migrations`](../db/migrations) | Ordered Postgres schema migrations |
 | `extension/src/shared/types.ts` | `FeedPost` / `TriageResult` shapes the request mirrors |

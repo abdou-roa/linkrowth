@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import { getDatabaseUrl } from "../config/env";
+import { getDatabaseUrl } from "./env";
 
 let pool: Pool | null = null;
 
@@ -11,13 +11,11 @@ export function getPool(): Pool {
 }
 
 export async function closePool(): Promise<void> {
-  if (pool) {
-    await pool.end();
-    pool = null;
-  }
+  if (!pool) return;
+  await pool.end();
+  pool = null;
 }
 
-/** Lightweight connectivity check used by /health. */
 export async function checkDatabase(): Promise<boolean> {
   try {
     await getPool().query("SELECT 1");

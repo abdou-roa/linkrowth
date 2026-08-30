@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createSuggestionJob, getSuggestionJob } from "../../db/suggestions";
+import { createSuggestionJob, getSuggestionJob } from "@linkrowth/db";
 import {
   claimClarificationResume,
   continueSuggestionJobAfterClarification,

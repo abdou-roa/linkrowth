@@ -26,20 +26,23 @@
     }
   },
   "scripts": {
+    "prebuild": "npm run build --prefix ../db",
     "build": "tsc -p tsconfig.json",
     "engage": "node dist/cli.js engage",
     "dev": "tsx src/cli.ts engage",
-    "eval": "tsx evals/runEvaluation.ts"
+    "eval": "tsx evals/runEvaluation.ts",
+    "test": "tsx --test src/context/experience/*.test.ts src/context/retrieveContext.test.ts src/persistence/retrievalTrace/*.test.ts"
   },
   "dependencies": {
+    "@linkrowth/db": "file:../db",
     "@google/genai": "^1.10.0",
+    "better-sqlite3": "^13.0.3",
     "dotenv": "^17.2.0",
-    "openai": "^5.10.0",
-    "pg": "^8.22.0"
+    "openai": "^5.10.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^24.0.0",
-    "@types/pg": "^8.20.0",
     "tsx": "^4.20.0",
     "typescript": "^5.8.0"
   },

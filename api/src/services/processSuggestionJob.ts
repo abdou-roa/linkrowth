@@ -1,15 +1,13 @@
-import {
-  MULTI_STEP_ENGAGE_AGENT_ID,
-  runEngageWithStatus,
-} from "@linkrowth/agent/runs";
+import { runEngageWithStatus } from "@linkrowth/agent/runs";
 import type { Post } from "@linkrowth/agent/types";
 import {
   resumeSuggestionJobWithAnswer,
+  type PostInput,
   type ResumedSuggestionJob,
-} from "../db/suggestions";
+} from "@linkrowth/db";
 import type { ClarificationSummary, FeedPostInput } from "../types/suggestions";
 
-function toAgentPost(feedPost: FeedPostInput): Post {
+function toAgentPost(feedPost: PostInput): Post {
   return {
     id: feedPost.id,
     url: feedPost.url,
@@ -47,7 +45,6 @@ export async function processSuggestionJob(
 ): Promise<void> {
   const outcome = await runEngageWithStatus(toAgentPost(feedPost), {
     jobId,
-    agentId: MULTI_STEP_ENGAGE_AGENT_ID,
   });
 
   if (outcome.kind === "awaiting_clarification") {
@@ -92,7 +89,6 @@ export async function continueSuggestionJobAfterClarification(
   const outcome = await runEngageWithStatus(toAgentPost(resumed.post), {
     jobId: resumed.jobId,
     skipClaim: true,
-    agentId: resumed.checkpoint.agentId || MULTI_STEP_ENGAGE_AGENT_ID,
     clarification: toAnsweredClarification(resumed.clarification, answer),
     // Analysis was validated when the job was paused for clarification.
     analysis: resumed.checkpoint.analysis as never,

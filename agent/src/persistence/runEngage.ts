@@ -1,25 +1,36 @@
 import { randomUUID } from "node:crypto";
-import { MULTI_STEP_ENGAGE_AGENT_ID } from "../agents/multiStepEngage";
-import { getAgent } from "../agents/registry";
-import { loadUserContext } from "../context/loadUserContext";
-import type { Post, UserContext } from "../core/types";
-import type { AnalysisArtifact, HumanClarification } from "../steps/types";
 import {
   claimSuggestionJob,
   failSuggestionJob,
-  JobNotClaimableError,
   pauseSuggestionJobForClarification,
-} from "./jobStatus";
+} from "@linkrowth/db";
+import { multiStepEngageAgent } from "../agents/multiStepEngage";
+import { loadUserContext } from "../context/loadUserContext";
+import { retrieveContext } from "../context/retrieveContext";
+import type { Post, UserContext } from "../core/types";
+import type { AnalysisArtifact, HumanClarification } from "../steps/types";
 import { createPostgresRunRepository } from "./postgresRepository";
+import { createRetrievalTraceRepository } from "./retrievalTrace/repository";
+import type {
+  RetrievalTrace,
+  RetrievalTraceRepository,
+} from "./retrievalTrace/types";
 import type { RunRecord, RunRepository } from "./types";
 
-export { MULTI_STEP_ENGAGE_AGENT_ID };
+const MULTI_STEP_AGENT_ID = "multi-step";
+
+export class JobNotClaimableError extends Error {
+  constructor(jobId: string) {
+    super(`Suggestion job ${jobId} is not queued`);
+    this.name = "JobNotClaimableError";
+  }
+}
 
 export interface RunEngageOptions {
   context?: UserContext;
   repository?: RunRepository;
-  /** Which agent pipeline to run. Defaults to multi-step (override via agentId or LINKROWTH_AGENT). */
-  agentId?: string;
+  /** Where retrieval traces are persisted. Defaults to env-selected (LINKROWTH_RETRIEVAL_TRACE). */
+  traceRepository?: RetrievalTraceRepository;
   /** Existing suggestion_jobs row from the API. Skips claim when the caller already claimed it. */
   jobId?: string;
   /** When true with jobId, skip the queued → running claim (caller already claimed). */
@@ -35,7 +46,6 @@ export type RunEngageOutcome =
   | {
       kind: "awaiting_clarification";
       jobId?: string;
-      agentId: string;
       clarification: HumanClarification;
       steps: RunRecord["steps"];
     };
@@ -72,11 +82,41 @@ export async function runEngageWithStatus(
   post: Post,
   options: RunEngageOptions = {}
 ): Promise<RunEngageOutcome> {
-  const context = options.context ?? loadUserContext();
+  const traceRepository =
+    options.traceRepository ?? createRetrievalTraceRepository();
+
+  // Context chokepoint: callers that pass context skip retrieval (tests / overrides).
+  // Otherwise load the static persona and enrich it from the experience index.
+  // Retrieval emits a trace through a capturing sink; we persist it after the run
+  // so it can link to the run id — see the finally block below.
+  let context: UserContext;
+  let capturedTrace: RetrievalTrace | undefined;
+  if (options.context) {
+    context = options.context;
+    console.log(
+      "[runEngage] context supplied by caller; retrieval skipped"
+    );
+  } else {
+    const baseContext = loadUserContext();
+    context = await retrieveContext(post, baseContext, {
+      traceSink: {
+        record: (trace) => {
+          capturedTrace = trace;
+        },
+      },
+    });
+    const baseProofKeys = new Set(
+      (baseContext.proofPoints ?? []).map((line) => line.trim().toLowerCase())
+    );
+    const injected = (context.proofPoints ?? []).filter(
+      (line) => !baseProofKeys.has(line.trim().toLowerCase())
+    );
+    console.log(
+      `[runEngage] retrieval injected ${injected.length} proof point(s) before agent run:`,
+      injected.length > 0 ? injected : "(none — static user.json only)"
+    );
+  }
   const repository = options.repository ?? createPostgresRunRepository();
-  const agent = getAgent(
-    options.agentId ?? process.env.LINKROWTH_AGENT ?? MULTI_STEP_ENGAGE_AGENT_ID
-  );
   const { jobId } = options;
 
   if (jobId && !options.skipClaim) {
@@ -87,9 +127,10 @@ export async function runEngageWithStatus(
   }
 
   const postId = post.id ?? randomUUID();
+  let runIdForTrace: string | undefined;
 
   try {
-    const outcome = await agent.run({
+    const outcome = await multiStepEngageAgent.run({
       post,
       context,
       clarification: options.clarification,
@@ -105,7 +146,6 @@ export async function runEngageWithStatus(
 
       if (jobId) {
         await pauseSuggestionJobForClarification(jobId, {
-          agentId: outcome.agentId,
           analysis: outcome.analysis,
           clarification: outcome.clarification,
           steps: outcome.steps,
@@ -115,7 +155,6 @@ export async function runEngageWithStatus(
       return {
         kind: "awaiting_clarification",
         jobId,
-        agentId: outcome.agentId,
         clarification: outcome.clarification,
         steps: outcome.steps,
       };
@@ -131,19 +170,37 @@ export async function runEngageWithStatus(
       id: randomUUID(),
       jobId,
       postId,
-      agentId: outcome.agentId,
       post: { ...post, id: postId },
       result: outcome.result,
       steps: outcome.steps,
       createdAt,
     };
 
-    return { kind: "completed", run: await repository.save(record) };
+    const saved = await repository.save(record);
+    runIdForTrace = saved.id;
+    return { kind: "completed", run: saved };
   } catch (err) {
     if (jobId && !(err instanceof JobNotClaimableError)) {
       const message = err instanceof Error ? err.message : String(err);
       await failSuggestionJob(jobId, message);
     }
     throw err;
+  } finally {
+    // Best-effort: a trace write must never break the engage flow.
+    if (capturedTrace) {
+      try {
+        await traceRepository.save(capturedTrace, {
+          agentId: MULTI_STEP_AGENT_ID,
+          runId: runIdForTrace,
+          jobId,
+          postId,
+        });
+      } catch (err) {
+        console.warn(
+          "[runEngage] failed to persist retrieval trace (ignored):",
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
   }
 }

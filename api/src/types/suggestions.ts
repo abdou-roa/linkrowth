@@ -1,4 +1,9 @@
 /** Request/response shapes for extension → API suggestion flow. */
+import type {
+  ClarificationSummary as DbClarificationSummary,
+  SuggestionJobStatus as DbSuggestionJobStatus,
+  SuggestionRunSummary as DbSuggestionRunSummary,
+} from "@linkrowth/db";
 
 export interface FeedPostAuthorInput {
   name?: string;
@@ -44,19 +49,9 @@ export interface CreateSuggestionRequest {
   notes?: string;
 }
 
-export type SuggestionJobStatus =
-  | "queued"
-  | "running"
-  | "awaiting_clarification"
-  | "succeeded"
-  | "failed";
+export type SuggestionJobStatus = DbSuggestionJobStatus;
 
-export interface ClarificationSummary {
-  status: "not_needed" | "pending" | "answered" | string;
-  question?: string | null;
-  reason?: string | null;
-  answer?: string | null;
-}
+export type ClarificationSummary = DbClarificationSummary;
 
 export interface CreateSuggestionResponse {
   jobId: string;
@@ -64,12 +59,7 @@ export interface CreateSuggestionResponse {
   status: SuggestionJobStatus;
 }
 
-export interface SuggestionRunSummary {
-  suggestion: string | null;
-  rationale: string | null;
-  category: string | null;
-  agentId: string | null;
-}
+export type SuggestionRunSummary = DbSuggestionRunSummary;
 
 export interface GetSuggestionResponse {
   jobId: string;

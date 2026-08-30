@@ -33,3 +33,22 @@ export async function call(request: LlmRequest): Promise<string> {
 
   return content;
 }
+
+export async function embed(texts: string[], model?: string): Promise<number[][]> {
+  const { embedModel } = getProviderConfig("openai");
+  const input = texts.map((t) => (t.trim() ? t : " "));
+  const response = await getClient().embeddings.create({
+    model: model ?? embedModel,
+    input,
+    encoding_format: "float",
+  });
+
+  const byIndex = [...response.data].sort((a, b) => a.index - b.index);
+  if (byIndex.length !== input.length) {
+    throw new Error(
+      `OpenAI embeddings: expected ${input.length} vectors, got ${byIndex.length}`
+    );
+  }
+
+  return byIndex.map((row) => row.embedding);
+}

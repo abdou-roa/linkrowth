@@ -12,8 +12,6 @@ import type {
   AgentRunResult,
 } from "./types";
 
-export const MULTI_STEP_ENGAGE_AGENT_ID = "multi_step_engage";
-
 /** Max draft+refine cycles before accepting the current draft. */
 const MAX_REFINE_ATTEMPTS = 2;
 
@@ -46,8 +44,6 @@ function finalizeResult(state: EngageState): EngageResult {
 }
 
 export class MultiStepEngageAgent implements Agent {
-  readonly id = MULTI_STEP_ENGAGE_AGENT_ID;
-
   constructor(private readonly deps: AgentDependencies) {}
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
@@ -64,7 +60,6 @@ export class MultiStepEngageAgent implements Agent {
       // HITL gate: stop before drafting until the user answers
       if (needsClarification(state.clarification)) {
         return {
-          agentId: this.id,
           status: "awaiting_clarification",
           steps: state.steps,
           clarification: state.clarification,
@@ -95,7 +90,6 @@ export class MultiStepEngageAgent implements Agent {
     }
 
     return {
-      agentId: this.id,
       status: "completed",
       result: finalizeResult(state),
       steps: state.steps,

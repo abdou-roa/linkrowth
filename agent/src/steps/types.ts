@@ -167,8 +167,8 @@ export type EngageRunStatus =
 /**
  * The blackboard threaded through a multi-step run; each step fills its slot.
  * Pipeline: analyzer → [HITL if needed] → drafter → refiner ↺ drafter.
- * Context is supplied by persistence (loadUserContext); the RAG seam stays in
- * context/, not as a step.
+ * Context is supplied by persistence (loadUserContext + retrieveContext);
+ * the RAG seam stays in context/, not as a step.
  */
 export interface EngageState {
   post: Post;
