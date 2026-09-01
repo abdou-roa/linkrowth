@@ -224,6 +224,7 @@ cd agent && npm run eval
 |---|---|
 | [`docs/distillation.md`](./docs/distillation.md) | Offline LLM distillation — candidates → Experience Artifacts |
 | [`docs/retrieval-layer.md`](./docs/retrieval-layer.md) | Embeddings, SQLite index, cosine similarity, query-time retrieval |
+| [`docs/retrieval-params.md`](./docs/retrieval-params.md) | Retrieval env vars, overrides, filters, and example configs |
 | [`docs/SPEC.md`](./docs/SPEC.md) | Technical & functional spec, episode ladder, decision log |
 | [`docs/MULTI-STEP-AGENT.md`](./docs/MULTI-STEP-AGENT.md) | Agents / steps design (analyzer → drafter → refiner) |
 | [`docs/structure.md`](./docs/structure.md) | Agent package layering and module rules |

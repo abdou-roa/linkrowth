@@ -1,0 +1,17 @@
+-- Retrieval trace schema v2 (Phase 2: split semantic fields).
+--
+-- No DDL changes required: the retrieval_traces table stores candidates,
+-- params, and timings as JSONB, so v2 traces (which add situationScore,
+-- evidenceScore on candidates and evidenceText on query) are backward-
+-- compatible with the existing schema. The schema_version INT column already
+-- records which trace contract version produced each row.
+--
+-- v2 fields added to the JSONB payloads (TypeScript types in
+-- agent/src/persistence/retrievalTrace/types.ts):
+--   candidates[].situationScore    number | undefined
+--   candidates[].evidenceScore     number | undefined
+--   query.evidenceText             string | undefined   (split strategy)
+--   index_meta.schemaVersion       number | undefined
+--   params.strategy                string ("single" | "split")
+--   params.candidatePoolSize       number (split strategy)
+--   timings.evidenceEmbedMs        number | undefined  (split strategy)
