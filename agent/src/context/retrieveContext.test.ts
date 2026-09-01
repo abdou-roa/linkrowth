@@ -475,3 +475,74 @@ describe("retrieveContext split strategy", () => {
     assert.equal(postgres?.evidenceScore, undefined);
   });
 });
+
+describe("retrieveContext hybrid strategy", () => {
+  it("fuses semantic + lexical ranks and records hybrid params on trace", async () => {
+    const { sink, last } = capturingSink();
+    const enriched = await retrieveContext(
+      { text: "How do you run durable Postgres suggestion jobs without Kafka?" },
+      baseContext,
+      {
+        loadIndex: () => fixtureIndex(),
+        embedQuery: async () => [1, 0, 0],
+        lexicalSearch: () => [
+          {
+            bm25Score: -5.0,
+            artifact: fixtureIndex().items[0]!.artifact,
+          },
+        ],
+        k: 3,
+        minScore: 0.3,
+        strategy: "hybrid",
+        rrfC: 60,
+        traceSink: sink,
+      }
+    );
+
+    assert.ok(
+      enriched.proofPoints?.includes(
+        "I built a Postgres-backed suggestion job queue with claim semantics."
+      )
+    );
+
+    const trace = last();
+    assert.equal(trace.schemaVersion, RETRIEVAL_TRACE_SCHEMA_VERSION);
+    assert.equal(trace.params.strategy, "hybrid");
+    assert.equal(trace.params.minScore, 0);
+    assert.equal(trace.params.rrfC, 60);
+
+    const postgres = trace.candidates.find((c) => c.artifactId === "postgres");
+    assert.ok(postgres?.selected);
+    assert.ok(postgres?.rrfScore !== undefined);
+    assert.ok(postgres?.situationScore !== undefined);
+    assert.equal(postgres?.lexicalRank, 1);
+    assert.equal(postgres?.bm25Score, -5.0);
+  });
+
+  it("falls back to situation-only when lexical search throws", async () => {
+    const { sink, last } = capturingSink();
+    const enriched = await retrieveContext(
+      { text: "How do you run durable suggestion jobs without Kafka?" },
+      baseContext,
+      {
+        loadIndex: () => fixtureIndex(),
+        embedQuery: async () => [1, 0, 0],
+        lexicalSearch: () => {
+          throw new Error("FTS5 unavailable");
+        },
+        k: 3,
+        strategy: "hybrid",
+        traceSink: sink,
+      }
+    );
+
+    assert.ok(
+      enriched.proofPoints?.includes(
+        "I built a Postgres-backed suggestion job queue with claim semantics."
+      )
+    );
+    const trace = last();
+    assert.equal(trace.outcome, "injected");
+    assert.equal(trace.params.strategy, "hybrid");
+  });
+});

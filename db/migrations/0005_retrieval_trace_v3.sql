@@ -1,0 +1,17 @@
+-- Retrieval trace schema v3 (Phase 3: lexical retrieval + RRF fusion).
+--
+-- No DDL changes required: the retrieval_traces table stores candidates,
+-- params, and timings as JSONB, so v3 traces are backward-compatible with
+-- the existing schema. The schema_version INT column already records which
+-- trace contract version produced each row.
+--
+-- v3 fields added to the JSONB payloads (TypeScript types in
+-- agent/src/persistence/retrievalTrace/types.ts):
+--   candidates[].lexicalRank        number | undefined
+--   candidates[].bm25Score          number | undefined
+--   candidates[].rrfScore           number | undefined
+--   params.rrfC                     number (hybrid strategy)
+--   params.lexicalPoolSize          number (hybrid strategy)
+--   params.semanticPoolSize         number (hybrid strategy)
+--   params.bm25Weights              object (hybrid strategy)
+--   timings.lexicalMs               number | undefined

@@ -16,10 +16,14 @@ import {
   loadIndex as defaultLoadIndex,
   rankBySituation,
   rankIndex,
+  rankByLexical,
   evidenceScore as computeEvidenceScore,
+  buildFts5Query,
+  fuseRRF,
+  DEFAULT_BM25_WEIGHTS,
 } from "./experience/store";
 import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "./experience/types";
-import type { ExperienceIndex, RankedArtifact } from "./experience/types";
+import type { ExperienceIndex, FusedCandidate, LexicalRankedArtifact, RankedArtifact } from "./experience/types";
 import {
   RETRIEVAL_TRACE_SCHEMA_VERSION,
   noopTraceSink,
@@ -34,15 +38,21 @@ import type {
 
 export type EmbedQueryFn = (text: string) => Promise<number[]>;
 export type LoadIndexFn = (dbPath: string) => ExperienceIndex | null;
+export type LexicalSearchFn = (
+  dbPath: string,
+  query: string,
+  k: number
+) => LexicalRankedArtifact[];
 
-/** Which retrieval representation to use. `single` = current baseline; `split` = Phase 2. */
-export type RetrievalStrategy = "single" | "split";
+/** Which retrieval representation to use. */
+export type RetrievalStrategy = "single" | "split" | "hybrid";
 
 export const DEFAULT_RETRIEVAL_STRATEGY: RetrievalStrategy = "single";
 
 export function parseRetrievalStrategy(raw: string | undefined): RetrievalStrategy {
   const value = raw?.trim().toLowerCase();
   if (value === "split" || value === "2") return "split";
+  if (value === "hybrid" || value === "3") return "hybrid";
   return DEFAULT_RETRIEVAL_STRATEGY;
 }
 
@@ -84,6 +94,12 @@ export interface RetrieveContextOptions {
    * or k * 4.
    */
   candidatePoolSize?: number;
+  /** RRF rank constant (hybrid strategy). Default LINKROWTH_RETRIEVAL_RRF_C or 60. */
+  rrfC?: number;
+  /** BM25 candidate pool size (hybrid strategy). Default LINKROWTH_RETRIEVAL_LEXICAL_POOL or k * 4. */
+  lexicalPoolSize?: number;
+  /** Override lexical search (tests). */
+  lexicalSearch?: LexicalSearchFn;
 }
 
 function toIndexMeta(index: ExperienceIndex): RetrievalIndexMeta {
@@ -100,6 +116,7 @@ function toIndexMeta(index: ExperienceIndex): RetrievalIndexMeta {
 const DEFAULT_K = 5;
 const DEFAULT_MIN_SCORE = 0.3;
 const DEFAULT_CANDIDATE_POOL_MULTIPLIER = 4;
+const DEFAULT_RRF_C = 60;
 
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name]?.trim();
@@ -162,7 +179,8 @@ function warnIncompatibleIndex(schemaVersion: number): boolean {
  *
  * Strategy `single` (default): unchanged cosine baseline over the combined vector.
  * Strategy `split`: rank by situation cosine; annotate traces with evidence scores.
- * Production selection is unchanged in Phase 2 — only trace data differs.
+ * Strategy `hybrid`: situation cosine + BM25 via FTS5, fused with RRF.
+ * Production selection is unchanged in Phase 3 — `single` remains the default.
  */
 export async function retrieveContext(
   post: Post,
@@ -178,6 +196,10 @@ export async function retrieveContext(
   const candidatePoolSize =
     options.candidatePoolSize ??
     envInt("LINKROWTH_RETRIEVAL_CANDIDATE_POOL", k * DEFAULT_CANDIDATE_POOL_MULTIPLIER);
+  const lexicalPoolSize =
+    options.lexicalPoolSize ??
+    envInt("LINKROWTH_RETRIEVAL_LEXICAL_POOL", k * DEFAULT_CANDIDATE_POOL_MULTIPLIER);
+  const rrfC = options.rrfC ?? envInt("LINKROWTH_RETRIEVAL_RRF_C", DEFAULT_RRF_C);
 
   const constructed = buildRetrievalQuery(post, {
     tier: options.queryConstruction,
@@ -197,6 +219,13 @@ export async function retrieveContext(
   if (strategy === "split") {
     params.candidatePoolSize = candidatePoolSize;
   }
+  if (strategy === "hybrid") {
+    params.semanticPoolSize = Math.max(candidatePoolSize, k);
+    params.lexicalPoolSize = lexicalPoolSize;
+    params.rrfC = rrfC;
+    params.bm25Weights = DEFAULT_BM25_WEIGHTS;
+    params.minScore = 0; // RRF scores are not cosine values
+  }
 
   /** Emit a trace without ever letting persistence break retrieval. */
   const emit = async (
@@ -208,6 +237,7 @@ export async function retrieveContext(
       embedMs?: number;
       evidenceEmbedMs?: number;
       evidenceQueryText?: string;
+      lexicalMs?: number;
     } = {}
   ): Promise<void> => {
     const trace: RetrievalTrace = {
@@ -225,6 +255,7 @@ export async function retrieveContext(
       timings: {
         embedMs: extra.embedMs,
         evidenceEmbedMs: extra.evidenceEmbedMs,
+        lexicalMs: extra.lexicalMs,
         totalMs: Date.now() - startedAt,
       },
     };
@@ -291,13 +322,41 @@ export async function retrieveContext(
   const embedMs = Date.now() - embedStartedAt;
 
   // --- Candidate generation ---
-  // single: rank by combined vector (baseline).
-  // split:  rank by situation vector only with wider pool.
-  const poolSize = strategy === "split" ? Math.max(candidatePoolSize, k) : Math.max(k * 3, k);
-  const rawHits: RankedArtifact[] =
-    strategy === "split"
-      ? rankBySituation(index, queryVector, poolSize)
-      : rankIndex(index, queryVector, poolSize);
+  let rawHits: RankedArtifact[];
+  let fusionById: Map<string, FusedCandidate> | undefined;
+  let lexicalMs: number | undefined;
+
+  if (strategy === "hybrid") {
+    const semanticPoolSize = Math.max(candidatePoolSize, k);
+    const semanticHits = rankBySituation(index, queryVector, semanticPoolSize);
+
+    let lexicalHits: LexicalRankedArtifact[] = [];
+    const fts5Query = buildFts5Query(query);
+    if (fts5Query) {
+      const lexicalStart = Date.now();
+      try {
+        const lexicalFn = options.lexicalSearch ?? rankByLexical;
+        lexicalHits = lexicalFn(indexPath, fts5Query, lexicalPoolSize);
+        lexicalMs = Date.now() - lexicalStart;
+      } catch (err) {
+        console.warn(
+          "[retrieveContext] lexical search failed; continuing with situation-only candidates:",
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+
+    const fused = fuseRRF(semanticHits, lexicalHits, { c: rrfC });
+    fusionById = new Map(fused.map((f) => [f.artifact.id, f]));
+    rawHits = fused.map((f) => ({ score: f.rrfScore, artifact: f.artifact }));
+  } else {
+    const poolSize =
+      strategy === "split" ? Math.max(candidatePoolSize, k) : Math.max(k * 3, k);
+    rawHits =
+      strategy === "split"
+        ? rankBySituation(index, queryVector, poolSize)
+        : rankIndex(index, queryVector, poolSize);
+  }
 
   // --- Evidence scoring (split strategy, Phase 2) ---
   // Compute evidence cosine for every candidate and annotate the trace.
@@ -318,7 +377,6 @@ export async function retrieveContext(
           evidenceEmbedMs = Date.now() - evidenceEmbedStart;
           evidenceVectors = new Map<string, number>();
 
-          // Find the IndexedExperience for each raw hit to compute evidence cosine.
           const itemById = new Map(index.items.map((item) => [item.id, item]));
           for (const hit of rawHits) {
             const item = itemById.get(hit.artifact.id);
@@ -336,8 +394,9 @@ export async function retrieveContext(
     }
   }
 
-  // --- Selection (unchanged in Phase 2) ---
-  const decisions = evaluateHits(rawHits, { minScore, k });
+  // --- Selection ---
+  const effectiveMinScore = strategy === "hybrid" ? 0 : minScore;
+  const decisions = evaluateHits(rawHits, { minScore: effectiveMinScore, k });
   const candidates: RetrievalTraceHit[] = decisions.map((decision) => {
     const hit: RetrievalTraceHit = {
       artifactId: decision.hit.artifact.id,
@@ -354,6 +413,17 @@ export async function retrieveContext(
         if (es !== undefined) hit.evidenceScore = es;
       }
     }
+    if (strategy === "hybrid" && fusionById) {
+      const fused = fusionById.get(decision.hit.artifact.id);
+      if (fused) {
+        hit.rrfScore = fused.rrfScore;
+        if (fused.semanticRank !== undefined) hit.situationScore = fused.situationScore;
+        if (fused.lexicalRank !== undefined) {
+          hit.lexicalRank = fused.lexicalRank;
+          hit.bm25Score = fused.bm25Score;
+        }
+      }
+    }
     return hit;
   });
 
@@ -366,6 +436,7 @@ export async function retrieveContext(
       embedMs,
       evidenceEmbedMs,
       evidenceQueryText,
+      lexicalMs,
     });
     return baseContext;
   }
@@ -380,6 +451,7 @@ export async function retrieveContext(
     embedMs,
     evidenceEmbedMs,
     evidenceQueryText,
+    lexicalMs,
   });
 
   return {

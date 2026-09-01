@@ -3,17 +3,21 @@ import type {
   ExperienceArtifact,
   ExperienceIndex,
   IndexedExperience,
+  LexicalRankedArtifact,
   RankedArtifact,
 } from "./types";
 import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "./types";
+import { buildFts5Query, DEFAULT_BM25_WEIGHTS, type Bm25Weights } from "./fts";
 import { cosineSimilarity } from "./vector";
+
+export { buildFts5Query, fuseRRF, DEFAULT_BM25_WEIGHTS, type Bm25Weights } from "./fts";
 
 function decodeVector(blob: Buffer): number[] {
   const aligned = Buffer.from(blob);
   return Array.from(new Float32Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 4));
 }
 
-/** Load a schema-v2 experience index from SQLite, or null if missing/incompatible. */
+/** Load a schema-v3 experience index from SQLite, or null if missing/incompatible. */
 export function loadIndex(dbPath: string): ExperienceIndex | null {
   let db: Database.Database;
   try {
@@ -124,4 +128,58 @@ export function rankBySituation(
  */
 export function evidenceScore(item: IndexedExperience, evidenceQueryVector: number[]): number {
   return cosineSimilarity(item.evidenceVector, evidenceQueryVector);
+}
+
+/**
+ * BM25 lexical search over the FTS5 index. Returns [] on empty query or FTS error.
+ * bm25() returns negative values; lower (more negative) = better match.
+ */
+export function rankByLexical(
+  dbPath: string,
+  fts5Query: string,
+  k = 5,
+  weights: Bm25Weights = DEFAULT_BM25_WEIGHTS
+): LexicalRankedArtifact[] {
+  const query = buildFts5Query(fts5Query);
+  if (!query || k <= 0) return [];
+
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  } catch {
+    return [];
+  }
+
+  try {
+    const rows = db
+      .prepare(
+        `SELECT f.id,
+                bm25(experiences_fts, 0, @wTitle, @wDomains, @wStack, @wProblem, @wApproach, @wPaths) AS score,
+                e.artifact_json
+         FROM experiences_fts f
+         JOIN experiences e ON e.id = f.id
+         WHERE experiences_fts MATCH @query
+         ORDER BY score
+         LIMIT @k`
+      )
+      .all({
+        query,
+        k,
+        wTitle: weights.title,
+        wDomains: weights.domains,
+        wStack: weights.stack,
+        wProblem: weights.problem,
+        wApproach: weights.approach,
+        wPaths: weights.paths,
+      }) as Array<{ id: string; score: number; artifact_json: string }>;
+
+    return rows.map((row) => ({
+      bm25Score: row.score,
+      artifact: JSON.parse(row.artifact_json) as ExperienceArtifact,
+    }));
+  } catch {
+    return [];
+  } finally {
+    db.close();
+  }
 }

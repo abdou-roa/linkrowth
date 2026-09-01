@@ -8,7 +8,7 @@
  */
 
 /** Bump only when the RetrievalTrace shape (not scoring internals) changes. */
-export const RETRIEVAL_TRACE_SCHEMA_VERSION = 2;
+export const RETRIEVAL_TRACE_SCHEMA_VERSION = 3;
 
 /** Terminal state of a single retrieval attempt. */
 export type RetrievalOutcome =
@@ -32,7 +32,7 @@ export interface RetrievalIndexMeta {
   dimensions: number;
   indexedAt: string;
   count: number;
-  /** SQLite index schema version. 1 = single vector; 2 = split situation/evidence vectors. */
+  /** SQLite index schema version. 1 = single vector; 2 = split vectors; 3 = split + FTS5. */
   schemaVersion?: number;
 }
 
@@ -52,6 +52,12 @@ export interface RetrievalTraceHit {
   situationScore?: number;
   /** Evidence cosine against the analysis-derived query (split strategy, Phase 2+). */
   evidenceScore?: number;
+  /** 1-indexed position in the BM25 list (hybrid strategy, Phase 3). */
+  lexicalRank?: number;
+  /** Raw SQLite bm25() value (hybrid strategy, Phase 3). */
+  bm25Score?: number;
+  /** RRF combined score (hybrid strategy, Phase 3). */
+  rrfScore?: number;
   /** Future scoring signals (rerank score, hybrid weights, ...). Free-form on purpose. */
   signals?: Record<string, unknown>;
 }
@@ -83,7 +89,7 @@ export interface RetrievalTrace {
   /** Every ranked candidate considered, selected or not. */
   candidates: RetrievalTraceHit[];
   injectedProofPoints: string[];
-  timings?: { embedMs?: number; evidenceEmbedMs?: number; totalMs?: number };
+  timings?: { embedMs?: number; evidenceEmbedMs?: number; lexicalMs?: number; totalMs?: number };
 }
 
 /** Run/job/agent linkage supplied by persistence, not by retrieval. */

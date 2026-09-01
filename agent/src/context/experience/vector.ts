@@ -55,6 +55,28 @@ export function evidenceText(artifact: ExperienceArtifact): string {
     .join("\n");
 }
 
+/**
+ * Lexical document fields for FTS5 BM25 indexing.
+ * Mirrored from distill/src/index/vector.ts; keep in sync.
+ */
+export function lexicalFields(artifact: ExperienceArtifact): {
+  title: string;
+  domains: string;
+  stack: string;
+  problem: string;
+  approach: string;
+  paths: string;
+} {
+  return {
+    title: artifact.title.trim(),
+    domains: artifact.domains.join(", "),
+    stack: artifact.stack.join(", "),
+    problem: artifact.problem.trim(),
+    approach: artifact.approach.trim(),
+    paths: artifact.paths.slice(0, 24).join(" "),
+  };
+}
+
 export function cosineSimilarity(a: number[], b: number[]): number {
   const n = Math.min(a.length, b.length);
   if (n === 0 || a.length !== b.length) return 0;

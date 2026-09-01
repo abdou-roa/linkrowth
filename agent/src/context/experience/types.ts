@@ -33,8 +33,8 @@ export interface EmbeddingMeta {
   dimensions: number;
 }
 
-/** Schema version written by distill's saveIndex. 1 = single vector; 2 = split vectors. */
-export const EXPERIENCE_INDEX_SCHEMA_VERSION = 2;
+/** Schema version written by distill's saveIndex. 3 = split vectors + FTS5 lexical index. */
+export const EXPERIENCE_INDEX_SCHEMA_VERSION = 3;
 
 export interface IndexedExperience {
   id: string;
@@ -59,4 +59,25 @@ export interface ExperienceIndex {
 export interface RankedArtifact {
   score: number;
   artifact: ExperienceArtifact;
+}
+
+/** BM25-ranked artifact from the FTS5 lexical channel (Phase 3). */
+export interface LexicalRankedArtifact {
+  /** Raw SQLite bm25() value (negative = better match). */
+  bm25Score: number;
+  artifact: ExperienceArtifact;
+}
+
+/** Candidate after RRF fusion of semantic + lexical rank lists (Phase 3). */
+export interface FusedCandidate {
+  artifact: ExperienceArtifact;
+  rrfScore: number;
+  /** 1-indexed position in the semantic list; absent if not present. */
+  semanticRank?: number;
+  /** 1-indexed position in the lexical list; absent if not present. */
+  lexicalRank?: number;
+  /** Cosine from the situation semantic channel. */
+  situationScore?: number;
+  /** Raw bm25() from the lexical channel. */
+  bm25Score?: number;
 }

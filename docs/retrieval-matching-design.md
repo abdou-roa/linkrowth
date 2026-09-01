@@ -569,12 +569,12 @@ This is independently useful and does not require a new similarity technique.
   scoring; ✓
 - compare against the baseline before changing production selection.
 
-### Phase 3: add lexical retrieval and RRF
+### Phase 3: add lexical retrieval and RRF *(implemented)*
 
-- create the FTS5 lexical index;
-- retrieve semantic and BM25 candidate lists;
-- fuse ranks with RRF;
-- tune candidate counts and the RRF constant on the labeled set.
+- create the FTS5 lexical index; ✅
+- retrieve semantic and BM25 candidate lists; ✅
+- fuse ranks with RRF; ✅
+- tune candidate counts and the RRF constant on the labeled set. ⬜
 
 ### Phase 4: add structured reranking
 

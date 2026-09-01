@@ -7,15 +7,17 @@ channel, then fuses both rank lists with Reciprocal Rank Fusion (RRF).
 
 Phase 3 scope, verbatim from the design:
 
-- create the FTS5 lexical index; ⬜
-- retrieve semantic and BM25 candidate lists; ⬜
-- fuse ranks with RRF; ⬜
+- create the FTS5 lexical index; ✅
+- retrieve semantic and BM25 candidate lists; ✅
+- fuse ranks with RRF; ✅
 - tune candidate counts and the RRF constant on the labeled set. ⬜
 
+**Status: implementation complete; evaluation/tuning pending.** The hybrid
+pipeline ships behind `LINKROWTH_RETRIEVAL_STRATEGY=hybrid` (default remains
+`single`). Tuning RRF constant and pool sizes on the labeled set is deferred.
+
 **Guiding constraint:** Phase 3 changes *how candidates are generated*, but must
-**not** change production selection until the labeled comparison in step 4
-justifies it. The new path ships behind
-`LINKROWTH_RETRIEVAL_STRATEGY=hybrid` (default remains `single`).
+**not** change production selection until the labeled comparison justifies it.
 
 ---
 

@@ -54,6 +54,31 @@ export function evidenceText(artifact: ExperienceArtifact): string {
     .join("\n");
 }
 
+/** Column strings for the FTS5 lexical index (Phase 3). */
+export interface LexicalFields {
+  title: string;
+  domains: string;
+  stack: string;
+  problem: string;
+  approach: string;
+  paths: string;
+}
+
+/**
+ * Lexical document fields for FTS5 BM25 indexing.
+ * tradeoff and claimableLine are excluded — evidence-channel signals (Phase 4).
+ */
+export function lexicalFields(artifact: ExperienceArtifact): LexicalFields {
+  return {
+    title: artifact.title.trim(),
+    domains: artifact.domains.join(", "),
+    stack: artifact.stack.join(", "),
+    problem: artifact.problem.trim(),
+    approach: artifact.approach.trim(),
+    paths: artifact.paths.slice(0, 24).join(" "),
+  };
+}
+
 export function cosineSimilarity(a: number[], b: number[]): number {
   const n = Math.min(a.length, b.length);
   if (n === 0 || a.length !== b.length) return 0;

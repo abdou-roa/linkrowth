@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { ExperienceArtifact } from "../types";
 import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "../types";
-import { buildIndex, loadIndex, rankBySituation, rankIndex, saveIndex } from "./store";
-import { cosineSimilarity, evidenceText, retrievalText, situationText } from "./vector";
+import { buildIndex, loadIndex, rankByLexical, rankBySituation, rankIndex, saveIndex } from "./store";
+import { cosineSimilarity, evidenceText, lexicalFields, retrievalText, situationText } from "./vector";
 
 const artifact = (id: string, line: string, extra: Partial<ExperienceArtifact> = {}): ExperienceArtifact => ({
   id,
@@ -160,12 +160,30 @@ describe("vector helpers", () => {
     assert.ok((hits[0]?.score ?? 0) > 0.9);
   });
 
+  it("lexicalFields: maps artifact to FTS5 column strings", () => {
+    const fields = lexicalFields(
+      artifact("exp_6", "Postgres jobs", {
+        domains: ["postgres"],
+        stack: ["Postgres"],
+        problem: "Need durable jobs",
+        approach: "Queued rows",
+        paths: ["db/migrations/0001.sql"],
+      })
+    );
+    assert.equal(fields.title, "Postgres jobs");
+    assert.match(fields.domains, /postgres/);
+    assert.match(fields.stack, /Postgres/);
+    assert.match(fields.problem, /durable jobs/);
+    assert.match(fields.approach, /Queued rows/);
+    assert.match(fields.paths, /0001\.sql/);
+  });
+
   it("returns 0 cosine for mismatched dimensions", () => {
     assert.equal(cosineSimilarity([1, 0], [1, 0, 0]), 0);
     assert.equal(cosineSimilarity([], [1]), 0);
   });
 
-  it("persists and reloads the v2 index from SQLite with all three vectors", async () => {
+  it("persists and reloads the v3 index from SQLite with FTS5 lexical table", async () => {
     const dir = mkdtempSync(join(tmpdir(), "distill-index-"));
     const dbPath = join(dir, "experience-index.db");
 
@@ -217,6 +235,10 @@ describe("vector helpers", () => {
       // rankBySituation uses situation vector → near wins [0,1,0] for query [0,1,0]
       const situationHits = rankBySituation(loaded, [0, 1, 0], 1);
       assert.equal(situationHits[0]?.artifact.id, "near");
+
+      const lexicalHits = rankByLexical(dbPath, "postgres job queue", 5);
+      assert.ok(lexicalHits.length >= 1);
+      assert.equal(lexicalHits[0]?.artifact.id, "near");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
