@@ -1,4 +1,6 @@
 import type { Post } from "../core/types";
+import type { AnalysisArtifact } from "../steps/types";
+import { answerableQuestions } from "../steps/types";
 
 /** Query-construction strategies. `raw` is the pre-Tier-A blob baseline. */
 export type QueryConstructionTier = "raw" | "a";
@@ -163,4 +165,77 @@ function collapseWhitespace(text: string): string {
     .replace(/ *\n */g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+// ---------------------------------------------------------------------------
+// Evidence query — deterministic mapping from AnalysisArtifact to a text
+// string for evidence-channel cosine scoring in the split strategy.
+// Defined in Phase 2; wired into production ranking in Phase 4.
+// ---------------------------------------------------------------------------
+
+/**
+ * Which AnalysisArtifact fields contributed to the evidence query, for tracing.
+ * A field is "present" when it produced non-empty text.
+ */
+export interface EvidenceQueryProvenance {
+  hasCoreThesis: boolean;
+  hasInsightDirection: boolean;
+  hasAcknowledgedPoint: boolean;
+  answerableQuestionCount: number;
+  unspokenTradeoffCount: number;
+}
+
+export interface EvidenceQuery {
+  /** Text assembled from analysis fields. Empty string when analysis carries no usable signals. */
+  evidenceQuery: string;
+  provenance: EvidenceQueryProvenance;
+  constructedLength: number;
+}
+
+/**
+ * Build a deterministic evidence query from a completed AnalysisArtifact.
+ *
+ * The query maps the *intended response* — coreThesis, pivotStrategy, answerable
+ * questions, and unspokenTradeoffs — into a text string that can be embedded and
+ * compared against an artifact's evidence vector (approach + tradeoff + claimableLine).
+ *
+ * This is pure and synchronous: no LLM call, no side-effects.
+ * Wired into production evidence scoring in Phase 4; Phase 2 uses it offline and
+ * for trace annotation only.
+ */
+export function buildEvidenceQuery(analysis: AnalysisArtifact): EvidenceQuery {
+  const parts: string[] = [];
+
+  const coreThesis = analysis.coreThesis?.trim();
+  if (coreThesis) parts.push(coreThesis);
+
+  const insightDirection = analysis.pivotStrategy?.insightDirection?.trim();
+  if (insightDirection) parts.push(insightDirection);
+
+  const acknowledgedPoint = analysis.pivotStrategy?.acknowledgedPoint?.trim();
+  if (acknowledgedPoint) parts.push(acknowledgedPoint);
+
+  const questions = answerableQuestions(analysis)
+    .map((q) => q.text.trim())
+    .filter(Boolean);
+  parts.push(...questions);
+
+  const tradeoffs = (analysis.unspokenTradeoffs ?? [])
+    .map((t) => t.trim())
+    .filter(Boolean);
+  parts.push(...tradeoffs);
+
+  const evidenceQuery = parts.join("\n");
+
+  return {
+    evidenceQuery,
+    provenance: {
+      hasCoreThesis: Boolean(coreThesis),
+      hasInsightDirection: Boolean(insightDirection),
+      hasAcknowledgedPoint: Boolean(acknowledgedPoint),
+      answerableQuestionCount: questions.length,
+      unspokenTradeoffCount: tradeoffs.length,
+    },
+    constructedLength: evidenceQuery.length,
+  };
 }

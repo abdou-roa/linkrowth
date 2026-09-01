@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import {
+  buildEvidenceQuery,
   buildRetrievalQuery,
   cleanSituationText,
   parseQueryConstructionTier,
@@ -97,5 +98,78 @@ describe("cleanSituationText", () => {
     const cleaned = cleanSituationText("Jobs   stalled.\n\n\nThen we  rewrote  the  worker.");
     assert.equal(cleaned.text, "Jobs stalled.\n\nThen we rewrote the worker.");
     assert.equal(cleaned.fallback, false);
+  });
+});
+
+describe("buildEvidenceQuery", () => {
+  it("assembles all analysis fields into a query string", () => {
+    const { evidenceQuery, provenance } = buildEvidenceQuery({
+      category: "technical",
+      coreThesis: "Silent job loss makes retry behavior untrustworthy.",
+      tone: "analytical",
+      authorProfile: { isTechnical: true, seniority: "ic" },
+      postQuestions: [
+        { text: "How do teams handle durable retries without Kafka?", decision: "answer", reason: "direct ask" },
+        { text: "Agree?", decision: "omit", reason: "rhetorical" },
+      ],
+      unspokenTradeoffs: ["Operational overhead of explicit acknowledgements."],
+      riskFlags: [],
+      pivotStrategy: {
+        acknowledgedPoint: "Silent loss is a real operational pain.",
+        insightDirection: "Offer a smaller-system pattern based on explicit delivery acknowledgement.",
+      },
+      responseParameters: { technicalDepth: "high", suggestedLength: "standard" },
+    });
+
+    assert.match(evidenceQuery, /Silent job loss makes retry behavior untrustworthy/);
+    assert.match(evidenceQuery, /explicit delivery acknowledgement/);
+    assert.match(evidenceQuery, /Silent loss is a real operational pain/);
+    assert.match(evidenceQuery, /How do teams handle durable retries without Kafka/);
+    assert.match(evidenceQuery, /Operational overhead/);
+    assert.doesNotMatch(evidenceQuery, /Agree\?/); // omitted question excluded
+
+    assert.equal(provenance.hasCoreThesis, true);
+    assert.equal(provenance.hasInsightDirection, true);
+    assert.equal(provenance.hasAcknowledgedPoint, true);
+    assert.equal(provenance.answerableQuestionCount, 1);
+    assert.equal(provenance.unspokenTradeoffCount, 1);
+  });
+
+  it("returns an empty string when analysis has no usable signals", () => {
+    const { evidenceQuery, provenance } = buildEvidenceQuery({
+      category: "informal",
+      coreThesis: "",
+      tone: "neutral",
+      authorProfile: { isTechnical: false, seniority: "unknown" },
+      postQuestions: [],
+      unspokenTradeoffs: [],
+      riskFlags: [],
+      pivotStrategy: { acknowledgedPoint: "", insightDirection: "" },
+      responseParameters: { technicalDepth: "accessible", suggestedLength: "short" },
+    });
+
+    assert.equal(evidenceQuery, "");
+    assert.equal(provenance.hasCoreThesis, false);
+    assert.equal(provenance.answerableQuestionCount, 0);
+  });
+
+  it("excludes omit-classified questions from the evidence query", () => {
+    const { evidenceQuery } = buildEvidenceQuery({
+      category: "technical",
+      coreThesis: "Some thesis.",
+      tone: "analytical",
+      authorProfile: { isTechnical: true, seniority: "ic" },
+      postQuestions: [
+        { text: "Should I use Kafka?", decision: "omit", reason: "rhetorical" },
+        { text: "How do I add durability?", decision: "answer", reason: "direct ask" },
+      ],
+      unspokenTradeoffs: [],
+      riskFlags: [],
+      pivotStrategy: { acknowledgedPoint: "", insightDirection: "" },
+      responseParameters: { technicalDepth: "high", suggestedLength: "standard" },
+    });
+
+    assert.doesNotMatch(evidenceQuery, /Kafka/);
+    assert.match(evidenceQuery, /How do I add durability/);
   });
 });

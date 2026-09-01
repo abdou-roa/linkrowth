@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import Database from "better-sqlite3";
-import type { ExperienceArtifact, ExperienceIndex } from "./types";
-import { loadIndex, rankIndex } from "./store";
-import { cosineSimilarity, retrievalText } from "./vector";
+import type { ExperienceArtifact, ExperienceIndex, IndexedExperience } from "./types";
+import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "./types";
+import { evidenceScore, loadIndex, rankBySituation, rankIndex } from "./store";
+import { cosineSimilarity, evidenceText, retrievalText, situationText } from "./vector";
 
 const artifact = (
   id: string,
@@ -35,8 +36,59 @@ function encodeVector(vector: number[]): Buffer {
   return Buffer.from(new Float32Array(vector).buffer);
 }
 
-/** Test-only writer matching distill's experience-index.db schema. */
-function writeFixtureIndex(dbPath: string, index: ExperienceIndex): void {
+/** Write a v2 fixture index directly to SQLite (mirrors distill's saveIndex v2 format). */
+function writeFixtureIndexV2(dbPath: string, index: ExperienceIndex): void {
+  const db = new Database(dbPath);
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS index_meta (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        indexed_at TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        dimensions INTEGER NOT NULL,
+        count INTEGER NOT NULL,
+        schema_version INTEGER NOT NULL DEFAULT 2
+      );
+      CREATE TABLE IF NOT EXISTS experiences (
+        id TEXT PRIMARY KEY,
+        vector BLOB NOT NULL,
+        situation_vector BLOB NOT NULL,
+        evidence_vector BLOB NOT NULL,
+        artifact_json TEXT NOT NULL
+      );
+    `);
+    db.prepare(
+      `INSERT INTO index_meta (id, indexed_at, provider, model, dimensions, count, schema_version)
+       VALUES (1, @indexedAt, @provider, @model, @dimensions, @count, @schemaVersion)`
+    ).run({
+      indexedAt: index.indexedAt,
+      provider: index.embedding.provider,
+      model: index.embedding.model,
+      dimensions: index.embedding.dimensions,
+      count: index.count,
+      schemaVersion: index.schemaVersion,
+    });
+    const insert = db.prepare(
+      `INSERT INTO experiences (id, vector, situation_vector, evidence_vector, artifact_json)
+       VALUES (@id, @vector, @situationVector, @evidenceVector, @artifactJson)`
+    );
+    for (const item of index.items) {
+      insert.run({
+        id: item.id,
+        vector: encodeVector(item.vector),
+        situationVector: encodeVector(item.situationVector),
+        evidenceVector: encodeVector(item.evidenceVector),
+        artifactJson: JSON.stringify(item.artifact),
+      });
+    }
+  } finally {
+    db.close();
+  }
+}
+
+/** Write a v1 fixture index (no schema_version column, single vector). */
+function writeFixtureIndexV1(dbPath: string, items: IndexedExperience[]): void {
   const db = new Database(dbPath);
   try {
     db.exec(`
@@ -56,18 +108,12 @@ function writeFixtureIndex(dbPath: string, index: ExperienceIndex): void {
     `);
     db.prepare(
       `INSERT INTO index_meta (id, indexed_at, provider, model, dimensions, count)
-       VALUES (1, @indexedAt, @provider, @model, @dimensions, @count)`
-    ).run({
-      indexedAt: index.indexedAt,
-      provider: index.embedding.provider,
-      model: index.embedding.model,
-      dimensions: index.embedding.dimensions,
-      count: index.count,
-    });
+       VALUES (1, '2026-08-01T00:00:00Z', 'test', 'fake-v1', 3, @count)`
+    ).run({ count: items.length });
     const insert = db.prepare(
       `INSERT INTO experiences (id, vector, artifact_json) VALUES (@id, @vector, @artifactJson)`
     );
-    for (const item of index.items) {
+    for (const item of items) {
       insert.run({
         id: item.id,
         vector: encodeVector(item.vector),
@@ -79,8 +125,18 @@ function writeFixtureIndex(dbPath: string, index: ExperienceIndex): void {
   }
 }
 
+function makeV2Index(near: IndexedExperience, far: IndexedExperience): ExperienceIndex {
+  return {
+    indexedAt: "2026-08-27T00:00:00Z",
+    schemaVersion: EXPERIENCE_INDEX_SCHEMA_VERSION,
+    embedding: { provider: "test", model: "fake", dimensions: 3 },
+    count: 2,
+    items: [near, far],
+  };
+}
+
 describe("vector helpers", () => {
-  it("builds retrieval text from claimable fields", () => {
+  it("retrievalText: builds combined text from claimable fields", () => {
     const text = retrievalText(
       artifact("exp_1", "I ship comments through a stable engage() signature.", {
         domains: ["linkedin-comments"],
@@ -93,45 +149,139 @@ describe("vector helpers", () => {
     assert.match(text, /linkedin-comments/);
   });
 
+  it("situationText: includes title/domains/stack/problem, excludes approach", () => {
+    const text = situationText(
+      artifact("exp_2", "Job durability", {
+        problem: "Jobs were lost.",
+        approach: "Used Redis Streams.",
+      })
+    );
+    assert.match(text, /Job durability/);
+    assert.match(text, /Jobs were lost/);
+    assert.doesNotMatch(text, /Redis Streams/);
+  });
+
+  it("evidenceText: includes approach/tradeoff/claimableLine, excludes problem", () => {
+    const text = evidenceText(
+      artifact("exp_3", "I built X.", {
+        problem: "The system was slow.",
+        approach: "Added connection pooling.",
+        tradeoff: "Slightly more memory.",
+      })
+    );
+    assert.match(text, /connection pooling/);
+    assert.match(text, /more memory/);
+    assert.doesNotMatch(text, /system was slow/);
+  });
+
   it("returns 0 cosine for mismatched dimensions", () => {
     assert.equal(cosineSimilarity([1, 0], [1, 0, 0]), 0);
     assert.equal(cosineSimilarity([], [1]), 0);
   });
 });
 
-describe("experience index store", () => {
-  it("loads and ranks from a SQLite fixture", () => {
+describe("experience index store (v2)", () => {
+  it("loads v2 index with all three vectors", () => {
     const dir = mkdtempSync(join(tmpdir(), "agent-experience-index-"));
     const dbPath = join(dir, "experience-index.db");
 
     try {
-      writeFixtureIndex(dbPath, {
-        indexedAt: "2026-08-27T00:00:00Z",
-        embedding: { provider: "test", model: "fake", dimensions: 3 },
-        count: 2,
-        items: [
-          {
-            id: "near",
-            vector: [1, 0, 0],
-            artifact: artifact("near", "postgres job queue"),
-          },
-          {
-            id: "far",
-            vector: [0, 1, 0],
-            artifact: artifact("far", "chrome extension badges"),
-          },
-        ],
-      });
+      const near: IndexedExperience = {
+        id: "near",
+        vector: [1, 0, 0],
+        situationVector: [0, 1, 0],
+        evidenceVector: [0, 0, 1],
+        artifact: artifact("near", "postgres job queue"),
+      };
+      const far: IndexedExperience = {
+        id: "far",
+        vector: [0, 1, 0],
+        situationVector: [0, 0, 1],
+        evidenceVector: [1, 0, 0],
+        artifact: artifact("far", "chrome extension badges"),
+      };
+
+      writeFixtureIndexV2(dbPath, makeV2Index(near, far));
 
       const loaded = loadIndex(dbPath);
       assert.ok(loaded);
+      assert.equal(loaded.schemaVersion, EXPERIENCE_INDEX_SCHEMA_VERSION);
       assert.equal(loaded.count, 2);
-      assert.equal(loaded.embedding.provider, "test");
       assert.equal(loaded.items.length, 2);
 
-      const hits = rankIndex(loaded, [1, 0, 0], 1);
-      assert.equal(hits[0]?.artifact.id, "near");
-      assert.ok((hits[0]?.score ?? 0) > 0.99);
+      const nearLoaded = loaded.items.find((i) => i.id === "near");
+      assert.ok(nearLoaded);
+      assert.deepEqual(nearLoaded.vector, [1, 0, 0]);
+      assert.deepEqual(nearLoaded.situationVector, [0, 1, 0]);
+      assert.deepEqual(nearLoaded.evidenceVector, [0, 0, 1]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rankBySituation uses situationVector", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-experience-index-"));
+    const dbPath = join(dir, "experience-index.db");
+
+    try {
+      // combined vectors reversed vs situation to ensure ranking is by situationVector
+      const near: IndexedExperience = {
+        id: "near",
+        vector: [0, 1, 0],           // combined — reversed
+        situationVector: [1, 0, 0],   // situation — matches query
+        evidenceVector: [0, 0, 1],
+        artifact: artifact("near", "near"),
+      };
+      const far: IndexedExperience = {
+        id: "far",
+        vector: [1, 0, 0],            // combined — would win with rankIndex
+        situationVector: [0, 1, 0],   // situation — farther from query
+        evidenceVector: [0, 0, 1],
+        artifact: artifact("far", "far"),
+      };
+
+      writeFixtureIndexV2(dbPath, makeV2Index(near, far));
+
+      const loaded = loadIndex(dbPath)!;
+      const hits = rankBySituation(loaded, [1, 0, 0], 2);
+      assert.equal(hits[0]?.artifact.id, "near", "situation cosine should rank 'near' first");
+
+      const combined = rankIndex(loaded, [1, 0, 0], 2);
+      assert.equal(combined[0]?.artifact.id, "far", "combined vector ranks 'far' first");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("evidenceScore returns cosine between item evidenceVector and query", () => {
+    const item: IndexedExperience = {
+      id: "x",
+      vector: [1, 0, 0],
+      situationVector: [1, 0, 0],
+      evidenceVector: [0, 0, 1],
+      artifact: artifact("x", "x"),
+    };
+    const eqVector = [0, 0, 1];
+    assert.ok(Math.abs(evidenceScore(item, eqVector) - 1.0) < 1e-6);
+  });
+
+  it("returns null for a pre-v2 index file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-experience-index-v1-"));
+    const dbPath = join(dir, "experience-index.db");
+
+    try {
+      const items: IndexedExperience[] = [
+        {
+          id: "v1item",
+          vector: [1, 0, 0],
+          situationVector: [1, 0, 0],
+          evidenceVector: [1, 0, 0],
+          artifact: artifact("v1item", "v1 artifact"),
+        },
+      ];
+      writeFixtureIndexV1(dbPath, items);
+
+      assert.equal(loadIndex(dbPath), null);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

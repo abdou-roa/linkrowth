@@ -94,15 +94,24 @@ export interface EmbeddingMeta {
   dimensions: number;
 }
 
+/** Schema version written to index_meta.schema_version in the SQLite index. */
+export const EXPERIENCE_INDEX_SCHEMA_VERSION = 2;
+
 export interface IndexedExperience {
   id: string;
+  /** Combined retrievalText() vector — used by the single-vector strategy. */
   vector: number[];
+  /** situationText() vector: title + domains + stack + problem. */
+  situationVector: number[];
+  /** evidenceText() vector: approach + tradeoff + claimableLine. */
+  evidenceVector: number[];
   artifact: ExperienceArtifact;
 }
 
 /** In-memory vector index; persisted to distill/data/experience-index.db (SQLite). */
 export interface ExperienceIndex {
   indexedAt: string;
+  schemaVersion: number;
   embedding: EmbeddingMeta;
   count: number;
   items: IndexedExperience[];

@@ -8,7 +8,7 @@
  */
 
 /** Bump only when the RetrievalTrace shape (not scoring internals) changes. */
-export const RETRIEVAL_TRACE_SCHEMA_VERSION = 1;
+export const RETRIEVAL_TRACE_SCHEMA_VERSION = 2;
 
 /** Terminal state of a single retrieval attempt. */
 export type RetrievalOutcome =
@@ -32,6 +32,8 @@ export interface RetrievalIndexMeta {
   dimensions: number;
   indexedAt: string;
   count: number;
+  /** SQLite index schema version. 1 = single vector; 2 = split situation/evidence vectors. */
+  schemaVersion?: number;
 }
 
 export interface RetrievalTraceHit {
@@ -43,6 +45,13 @@ export interface RetrievalTraceHit {
   selected: boolean;
   dropReason?: RetrievalDropReason;
   claimableLine?: string;
+  /**
+   * Situation cosine when strategy=split (same as score in that mode; explicit
+   * for readability when both channels are recorded).
+   */
+  situationScore?: number;
+  /** Evidence cosine against the analysis-derived query (split strategy, Phase 2+). */
+  evidenceScore?: number;
   /** Future scoring signals (rerank score, hybrid weights, ...). Free-form on purpose. */
   signals?: Record<string, unknown>;
 }
@@ -60,15 +69,21 @@ export interface RetrievalTrace {
     text: string;
     /** Author headline, recorded but not mixed into `text`. */
     headline?: string;
+    /**
+     * Evidence query derived from AnalysisArtifact when available (split strategy).
+     * Not embedded in Phase 2 production path; used for offline evaluation and
+     * trace annotation when analysis is passed via RetrieveContextOptions.
+     */
+    evidenceText?: string;
   };
   /** Null when no index was loaded (missing index / empty query). */
   index: RetrievalIndexMeta | null;
-  /** Config knobs in effect (k, minScore, and future retrieval params). */
+  /** Config knobs in effect (k, minScore, strategy, and future retrieval params). */
   params: Record<string, unknown>;
   /** Every ranked candidate considered, selected or not. */
   candidates: RetrievalTraceHit[];
   injectedProofPoints: string[];
-  timings?: { embedMs?: number; totalMs?: number };
+  timings?: { embedMs?: number; evidenceEmbedMs?: number; totalMs?: number };
 }
 
 /** Run/job/agent linkage supplied by persistence, not by retrieval. */
