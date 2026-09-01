@@ -385,6 +385,9 @@ npm run search -- "postgres background jobs reliability"
 
 ## Environment variables (retrieval)
 
+Full parameter reference (env vars, overrides, filters, examples):
+[`retrieval-params.md`](./retrieval-params.md).
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `LINKROWTH_PROVIDER` | `openai` | Active LLM + embed provider |
