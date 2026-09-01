@@ -1,4 +1,4 @@
-/** Author fields aligned with helpers/schema.sql posts.author_* columns. */
+/** Author fields aligned with @linkrowth/db posts.author_* columns. */
 export interface PostAuthor {
   name?: string;
   headline?: string;
@@ -18,7 +18,7 @@ export interface PostComment {
 }
 
 /**
- * Feed post shape aligned with helpers/schema.sql `posts`.
+ * Feed post shape aligned with @linkrowth/db `posts`.
  * CLI may pass only `{ text }`; id is assigned before persistence.
  */
 export interface Post {

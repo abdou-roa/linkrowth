@@ -1,6 +1,6 @@
+import { closePool } from "@linkrowth/db";
 import { createApp } from "./app";
 import { env, validateEnv } from "./config/env";
-import { closePool } from "./db/client";
 
 validateEnv();
 

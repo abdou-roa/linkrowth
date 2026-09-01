@@ -1,0 +1,100 @@
+/**
+ * Stable, change-tolerant contract for retrieval traces.
+ *
+ * The persistence layer (schema + repository) depends ONLY on these types, never
+ * on retrieval internals. When retrieval/scoring logic changes, evolve the open
+ * `params` / `signals` bags instead of the columns; bump SCHEMA_VERSION only if
+ * the top-level contract itself changes so readers can branch on it.
+ */
+
+/** Bump only when the RetrievalTrace shape (not scoring internals) changes. */
+export const RETRIEVAL_TRACE_SCHEMA_VERSION = 1;
+
+/** Terminal state of a single retrieval attempt. */
+export type RetrievalOutcome =
+  | "injected"
+  | "empty_query"
+  | "no_index"
+  | "embed_failed"
+  | "no_survivors";
+
+/** Why a ranked candidate did not become a proof point. */
+export type RetrievalDropReason =
+  | "shareability"
+  | "confidence"
+  | "min_score"
+  | "empty_claim"
+  | "over_k";
+
+export interface RetrievalIndexMeta {
+  provider: string;
+  model: string;
+  dimensions: number;
+  indexedAt: string;
+  count: number;
+}
+
+export interface RetrievalTraceHit {
+  artifactId: string;
+  score: number;
+  /** Position in the raw cosine ranking (0-based). */
+  rank: number;
+  /** True when the hit survived every filter and became a proof point. */
+  selected: boolean;
+  dropReason?: RetrievalDropReason;
+  claimableLine?: string;
+  /** Future scoring signals (rerank score, hybrid weights, ...). Free-form on purpose. */
+  signals?: Record<string, unknown>;
+}
+
+/**
+ * A single retrieval attempt, produced by the retrieval layer. Run/job/agent
+ * identity is attached separately at persist time (see RetrievalTraceRefs) so
+ * retrieval stays unaware of persistence concerns.
+ */
+export interface RetrievalTrace {
+  schemaVersion: number;
+  outcome: RetrievalOutcome;
+  query: {
+    /** Situation text that was (or would have been) embedded. */
+    text: string;
+    /** Author headline, recorded but not mixed into `text`. */
+    headline?: string;
+  };
+  /** Null when no index was loaded (missing index / empty query). */
+  index: RetrievalIndexMeta | null;
+  /** Config knobs in effect (k, minScore, and future retrieval params). */
+  params: Record<string, unknown>;
+  /** Every ranked candidate considered, selected or not. */
+  candidates: RetrievalTraceHit[];
+  injectedProofPoints: string[];
+  timings?: { embedMs?: number; totalMs?: number };
+}
+
+/** Run/job/agent linkage supplied by persistence, not by retrieval. */
+export interface RetrievalTraceRefs {
+  agentId?: string;
+  runId?: string;
+  jobId?: string;
+  postId?: string;
+}
+
+/**
+ * Where retrieval emits a finished trace. The default is a no-op; runEngage
+ * injects a capturing sink and persists via RetrievalTraceRepository. Retrieval
+ * depends on this interface only, never on the database.
+ */
+export interface RetrievalTraceSink {
+  record(trace: RetrievalTrace): void | Promise<void>;
+}
+
+export interface RetrievalTraceRepository {
+  save(trace: RetrievalTrace, refs: RetrievalTraceRefs): Promise<void>;
+}
+
+/** Sink that discards traces. Used when retrieval runs without persistence. */
+export const noopTraceSink: RetrievalTraceSink = {
+  record() {
+    /* discard */
+  },
+};

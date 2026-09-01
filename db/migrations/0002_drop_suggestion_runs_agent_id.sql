@@ -1,0 +1,6 @@
+BEGIN;
+
+ALTER TABLE IF EXISTS suggestion_runs
+  DROP COLUMN IF EXISTS agent_id;
+
+COMMIT;

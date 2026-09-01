@@ -20,13 +20,11 @@ Extension (user clicks a post)
 | Concern | Owner |
 | --- | --- |
 | HTTP surface, auth, validation | `api/` |
-| Schema + migrations | API / `helpers/schema.sql` |
+| Postgres pool, queries, schema, migrations, seeds | `@linkrowth/db` / `db/` |
 | Comment suggestion LLM | `agent/` (`engage`) — called by worker, not by the extension |
 | Feed triage UI | `extension/` |
 
-The API does **not** import the extension. The agent should stay pure compute once wired; the API/worker owns Postgres writes for jobs and runs.
-
-Schema draft: see `docs/database-schema.md` (local) and `helpers/schema.sql`.
+The API does **not** import the extension. Both the API and agent orchestration call typed persistence functions from `@linkrowth/db`; neither embeds SQL.
 
 ---
 
@@ -82,9 +80,7 @@ api/
   src/
     index.ts                    # listen + graceful shutdown
     app.ts                      # Express app + routes
-    config/env.ts               # PORT, NODE_ENV, DATABASE_URL, API_KEY
-    db/client.ts                # pg Pool
-    db/suggestions.ts           # upsert post + enqueue/get jobs
+    config/env.ts               # PORT, NODE_ENV, API_KEY
     middleware/auth.ts          # Bearer API key guard for /v1
     routes/suggestions/         # POST/GET /v1/suggestions
     types/suggestions.ts        # request/response types
@@ -169,5 +165,5 @@ Future options: separate worker process, or agent HTTP service.
 | --- | --- |
 | `extension/` | Future client of `POST/GET /v1/suggestions` |
 | `agent/` | Provides `engage(post)` for the worker |
-| `helpers/schema.sql` | Shared Postgres DDL |
+| `db/` | Shared Postgres pool, typed queries, migrations, and seeds |
 | `docker-compose.yml` | Runs `postgres` + `api` |

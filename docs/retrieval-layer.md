@@ -17,9 +17,9 @@ OFFLINE (distill/)
   experience-index.db (SQLite)
 
 ONLINE (agent/)
-  post.text + post.author.headline
-        ↓ buildRetrievalQuery()
-        ↓ embedQuery() — RETRIEVAL_QUERY (Gemini) or same embed API (OpenAI)
+  post.text
+        ↓ buildRetrievalQuery() → { situationQuery, headline }
+        ↓ embedQuery(situationQuery) — RETRIEVAL_QUERY (Gemini) or same embed API (OpenAI)
         ↓ query vector
         ↓ cosineSimilarity() vs every stored vector (brute force)
         ↓ rank, filter, top-k
@@ -181,18 +181,37 @@ CREATE TABLE experiences (
 
 ## Query construction
 
-When a post is processed, retrieval builds one string from the post and optional author headline.
+When a post is processed, retrieval builds a **situation query** from the post
+body and keeps the author headline as a separate field. Only `situationQuery` is
+embedded.
 
-`agent/src/context/retrieveContext.ts` → `buildRetrievalQuery()`:
+`agent/src/context/queryConstruction.ts` → `buildRetrievalQuery()`:
 
-| Input | Result |
-|---|---|
-| Headline + body | `"Author headline: <headline>\n\n<body>"` |
-| Body only | `"<body>"` |
-| Headline only | `"<headline>"` |
-| Neither | `""` → retrieval skipped entirely |
+Default strategy is **Tier A** (deterministic cleaning, no model). Set
+`LINKROWTH_RETRIEVAL_QUERY_CONSTRUCTION=raw` to restore the previous
+headline+body blob for comparison.
 
-No truncation, no cleaning beyond `.trim()`. The raw string goes to `embedQuery()`.
+| Input | `situationQuery` | `headline` |
+|---|---|---|
+| Headline + body | Cleaned body (headline **not** prepended) | Author headline |
+| Body only | Cleaned body | `""` |
+| Headline only | `""` → retrieval skipped | Author headline |
+| Neither | `""` → retrieval skipped | `""` |
+| Body that cleans to empty (hashtag-only, etc.) | Trimmed raw body (fallback) | Headline if present |
+
+Tier A cleaning (applied to the body only):
+
+- Strip trailing hashtag walls, `@mentions`, emojis, and trailing CTA lines
+  (`Thoughts?`, `follow for more`, …)
+- Keep inline hashtag **words** (`#postgres` → `postgres`)
+- Collapse whitespace; keep paragraph structure
+
+The constructed query is passed to `embedQuery()`. Headline is recorded on the
+retrieval trace (`query.headline`) for a later lexical/BM25 or tie-break
+channel and is never mixed into the situation vector.
+
+Traces also record `params.queryConstruction`: `{ tier, fallback, rawLength,
+constructedLength }`.
 
 **Note:** Query text is **not** passed through `retrievalText()`. That function is index-side only. Alignment comes from embedding model semantics (similar text → similar vectors), not from identical string formatting.
 
@@ -279,15 +298,15 @@ Comment from `select.ts`: *"irrelevant hits are actively harmful"*. Low-similari
 `retrieveContext()` steps:
 
 ```text
-1. buildRetrievalQuery(post)
-   → empty? return baseContext unchanged
+1. buildRetrievalQuery(post) → { situationQuery, headline }
+   → empty situationQuery? return baseContext unchanged
 
 2. loadIndex(indexPath)
    → missing / empty? return baseContext unchanged
 
 3. warnProviderMismatch(index)   // if index provider ≠ active provider
 
-4. queryVector = await embedQuery(query)
+4. queryVector = await embedQuery(situationQuery)
    → failure? log warning, return baseContext unchanged
 
 5. rawHits = rankIndex(index, queryVector, k * 3)
@@ -335,6 +354,7 @@ npm run search -- "postgres background jobs reliability"
 | `LINKROWTH_EXPERIENCE_INDEX_DB` | `../distill/data/experience-index.db` | Index file path (agent) |
 | `LINKROWTH_RETRIEVAL_K` | `5` | Max proof points after filtering |
 | `LINKROWTH_RETRIEVAL_MIN_SCORE` | `0.3` | Cosine score floor |
+| `LINKROWTH_RETRIEVAL_QUERY_CONSTRUCTION` | `a` | Query construction: `a` (Tier A cleaning) or `raw` (headline+body blob) |
 | `SEARCH_K` | `5` | Top hits for `npm run search` (distill CLI) |
 
 Also required: the matching provider API key (`OPENAI_API_KEY` or `GEMINI_API_KEY`).
@@ -381,7 +401,8 @@ sqlite3 distill/data/experience-index.db \
 | `distill/src/index/searchCli.ts` | `npm run search` debug CLI |
 | `distill/src/llm/index.ts` | `embed()`, `embedQuery()` |
 | **Online retrieval** | |
-| `agent/src/context/retrieveContext.ts` | Query build, embed, rank, merge proof points |
+| `agent/src/context/retrieveContext.ts` | Query embed, rank, merge proof points |
+| `agent/src/context/queryConstruction.ts` | Tier A `buildRetrievalQuery()` (situation vs headline) |
 | `agent/src/context/experience/store.ts` | Load SQLite, `rankIndex` |
 | `agent/src/context/experience/vector.ts` | `cosineSimilarity`, mirrored `retrievalText` |
 | `agent/src/context/experience/select.ts` | Shareability/confidence/score filters |
@@ -390,6 +411,7 @@ sqlite3 distill/data/experience-index.db \
 | `distill/src/index/vector.test.ts` | Cosine + ranking unit tests |
 | `agent/src/context/experience/store.test.ts` | Store + cosine tests |
 | `agent/src/context/retrieveContext.test.ts` | End-to-end retrieval behavior |
+| `agent/src/context/queryConstruction.test.ts` | Tier A query cleaning |
 
 ---
 
@@ -397,4 +419,5 @@ sqlite3 distill/data/experience-index.db \
 
 - [`distillation.md`](./distillation.md) — offline LLM artifact production
 - [`retrieval-matching-design.md`](./retrieval-matching-design.md) — review of the current cosine baseline and proposed schema-aware hybrid matching
+- [`retrieval-query-construction.md`](./retrieval-query-construction.md) — query-side design: how a post becomes the embedded query
 - [`distill/README.md`](../distill/README.md) — setup and commands

@@ -3,9 +3,26 @@ import { getActiveProviderConfig } from "../config/llm";
 import { embedQuery as defaultEmbedQuery } from "../llm";
 import { getAgentRoot } from "../paths";
 import type { Post, UserContext } from "../core/types";
-import { mergeProofPoints, selectClaimableHits } from "./experience/select";
+import {
+  buildRetrievalQuery,
+  type BuildRetrievalQueryOptions,
+  type QueryConstructionTier,
+  type RetrievalQuery,
+} from "./queryConstruction";
+import { evaluateHits, mergeProofPoints } from "./experience/select";
 import { loadIndex as defaultLoadIndex, rankIndex } from "./experience/store";
 import type { ExperienceIndex, RankedArtifact } from "./experience/types";
+import {
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
+  noopTraceSink,
+} from "../persistence/retrievalTrace/types";
+import type {
+  RetrievalIndexMeta,
+  RetrievalOutcome,
+  RetrievalTrace,
+  RetrievalTraceHit,
+  RetrievalTraceSink,
+} from "../persistence/retrievalTrace/types";
 
 export type EmbedQueryFn = (text: string) => Promise<number[]>;
 export type LoadIndexFn = (dbPath: string) => ExperienceIndex | null;
@@ -21,6 +38,20 @@ export interface RetrieveContextOptions {
   k?: number;
   /** Cosine score floor. Default LINKROWTH_RETRIEVAL_MIN_SCORE or 0.3. */
   minScore?: number;
+  /** Where to emit the retrieval trace. Defaults to a no-op sink. */
+  traceSink?: RetrievalTraceSink;
+  /** Override query construction (`raw` baseline vs Tier A). */
+  queryConstruction?: QueryConstructionTier;
+}
+
+function toIndexMeta(index: ExperienceIndex): RetrievalIndexMeta {
+  return {
+    provider: index.embedding.provider,
+    model: index.embedding.model,
+    dimensions: index.embedding.dimensions,
+    indexedAt: index.indexedAt,
+    count: index.count,
+  };
 }
 
 const DEFAULT_K = 5;
@@ -47,13 +78,12 @@ export function defaultExperienceIndexPath(): string {
   return join(getAgentRoot(), "..", "distill", "data", "experience-index.db");
 }
 
-/** Query text for phase-1 retrieval: author headline (if any) + post body. */
-export function buildRetrievalQuery(post: Post): string {
-  const headline = post.author?.headline?.trim();
-  const body = post.text.trim();
-  if (headline && body) return `Author headline: ${headline}\n\n${body}`;
-  return body || headline || "";
-}
+export {
+  buildRetrievalQuery,
+  type BuildRetrievalQueryOptions,
+  type QueryConstructionTier,
+  type RetrievalQuery,
+};
 
 function warnProviderMismatch(index: ExperienceIndex): void {
   try {
@@ -78,15 +108,67 @@ export async function retrieveContext(
   baseContext: UserContext,
   options: RetrieveContextOptions = {}
 ): Promise<UserContext> {
-  const query = buildRetrievalQuery(post);
-  if (!query) return baseContext;
+  const startedAt = Date.now();
+  const traceSink = options.traceSink ?? noopTraceSink;
+  const k = options.k ?? envInt("LINKROWTH_RETRIEVAL_K", DEFAULT_K);
+  const minScore =
+    options.minScore ?? envFloat("LINKROWTH_RETRIEVAL_MIN_SCORE", DEFAULT_MIN_SCORE);
+  const constructed = buildRetrievalQuery(post, {
+    tier: options.queryConstruction,
+  });
+  const query = constructed.situationQuery;
+  const params: Record<string, unknown> = {
+    k,
+    minScore,
+    queryConstruction: {
+      tier: constructed.tier,
+      fallback: constructed.fallback,
+      rawLength: constructed.rawLength,
+      constructedLength: constructed.constructedLength,
+    },
+  };
+
+  /** Emit a trace without ever letting persistence break retrieval. */
+  const emit = async (
+    outcome: RetrievalOutcome,
+    extra: {
+      index?: RetrievalIndexMeta | null;
+      candidates?: RetrievalTraceHit[];
+      injectedProofPoints?: string[];
+      embedMs?: number;
+    } = {}
+  ): Promise<void> => {
+    const trace: RetrievalTrace = {
+      schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
+      outcome,
+      query: {
+        text: query,
+        headline: constructed.headline || undefined,
+      },
+      index: extra.index ?? null,
+      params,
+      candidates: extra.candidates ?? [],
+      injectedProofPoints: extra.injectedProofPoints ?? [],
+      timings: { embedMs: extra.embedMs, totalMs: Date.now() - startedAt },
+    };
+    try {
+      await traceSink.record(trace);
+    } catch (err) {
+      console.warn(
+        "[retrieveContext] trace sink failed (ignored):",
+        err instanceof Error ? err.message : err
+      );
+    }
+  };
+
+  if (!query) {
+    await emit("empty_query");
+    return baseContext;
+  }
 
   const indexPath = options.indexPath ?? defaultExperienceIndexPath();
   const loadIndex = options.loadIndex ?? defaultLoadIndex;
   const embedQuery = options.embedQuery ?? defaultEmbedQuery;
-  const k = options.k ?? envInt("LINKROWTH_RETRIEVAL_K", DEFAULT_K);
-  const minScore =
-    options.minScore ?? envFloat("LINKROWTH_RETRIEVAL_MIN_SCORE", DEFAULT_MIN_SCORE);
 
   let index: ExperienceIndex | null;
   try {
@@ -96,18 +178,23 @@ export async function retrieveContext(
       `[retrieveContext] Failed to load index at ${indexPath}:`,
       err instanceof Error ? err.message : err
     );
+    await emit("no_index");
     return baseContext;
   }
 
   if (!index?.items?.length) {
+    await emit("no_index");
     return baseContext;
   }
+
+  const indexMeta = toIndexMeta(index);
 
   // Only warn about provider drift when using the real embed path (not test doubles).
   if (!options.embedQuery) {
     warnProviderMismatch(index);
   }
 
+  const embedStartedAt = Date.now();
   let queryVector: number[];
   try {
     queryVector = await embedQuery(query);
@@ -116,16 +203,38 @@ export async function retrieveContext(
       "[retrieveContext] embedQuery failed; continuing without retrieved proof points:",
       err instanceof Error ? err.message : err
     );
+    await emit("embed_failed", { index: indexMeta, embedMs: Date.now() - embedStartedAt });
     return baseContext;
   }
+  const embedMs = Date.now() - embedStartedAt;
 
   // Over-fetch before filters so k survivors remain after shareability/confidence/score cuts.
   const rawHits: RankedArtifact[] = rankIndex(index, queryVector, Math.max(k * 3, k));
-  const selected = selectClaimableHits(rawHits, { minScore, k });
-  if (selected.length === 0) return baseContext;
+  const decisions = evaluateHits(rawHits, { minScore, k });
+  const candidates: RetrievalTraceHit[] = decisions.map((decision) => ({
+    artifactId: decision.hit.artifact.id,
+    score: decision.hit.score,
+    rank: decision.rank,
+    selected: decision.selected,
+    dropReason: decision.dropReason,
+    claimableLine: decision.hit.artifact.claimableLine,
+  }));
+  const selected = decisions.filter((decision) => decision.selected).map((d) => d.hit);
+
+  if (selected.length === 0) {
+    await emit("no_survivors", { index: indexMeta, candidates, embedMs });
+    return baseContext;
+  }
 
   const claimableLines = selected.map((hit) => hit.artifact.claimableLine);
   const proofPoints = mergeProofPoints(baseContext.proofPoints, claimableLines);
+
+  await emit("injected", {
+    index: indexMeta,
+    candidates,
+    injectedProofPoints: claimableLines,
+    embedMs,
+  });
 
   return {
     ...baseContext,
