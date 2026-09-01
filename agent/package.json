@@ -31,6 +31,7 @@
     "engage": "node dist/cli.js engage",
     "dev": "tsx src/cli.ts engage",
     "eval": "tsx evals/runEvaluation.ts",
+    "eval:retrieval": "tsx src/context/retrievalEvalCli.ts",
     "test": "tsx --test src/context/experience/*.test.ts src/context/queryConstruction.test.ts src/context/retrieveContext.test.ts src/persistence/retrievalTrace/*.test.ts"
   },
   "dependencies": {

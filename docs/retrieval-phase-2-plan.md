@@ -2,22 +2,42 @@
 
 This is the working plan for **Phase 2** of the retrieval-matching rollout
 defined in [`retrieval-matching-design.md`](./retrieval-matching-design.md).
-It is a plan, not shipped behavior. It refines the design's Phase 2 bullets into
-concrete files, contracts, schema, flags, and an evaluation method.
+It refines the design's Phase 2 bullets into concrete files, contracts, schema,
+flags, and an evaluation method.
+
+**Status: implementation complete; evaluation pending.** The split-vector
+pipeline ships behind `LINKROWTH_RETRIEVAL_STRATEGY=split` (default remains
+`single`). The labeled baseline comparison in step 5 has not been built yet —
+that is the remaining gate before changing production selection.
 
 Phase 2 scope, verbatim from the design's incremental rollout:
 
-- build situation and evidence vectors;
-- version and rebuild the SQLite index;
-- retrieve broad candidates by situation cosine;
+- build situation and evidence vectors; ✅
+- version and rebuild the SQLite index; ✅
+- retrieve broad candidates by situation cosine; ✅
 - define the deterministic analysis-derived query used later for evidence
-  scoring;
-- compare against the baseline before changing production selection.
+  scoring; ✅
+- compare against the baseline before changing production selection. ⬜
 
 **Guiding constraint:** Phase 2 changes *how experience is represented and
 scored*, but must **not** change what production injects into `proofPoints`
 until the labeled comparison in step 5 justifies it. The new path ships behind a
 strategy flag, defaulting to the current single-vector baseline.
+
+---
+
+## Implementation status
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| WB1 — Distill: two-vector index build | **Done** | `situationText` / `evidenceText`, batched interleaved embed, v2 `saveIndex`, CLI `--channel` |
+| WB2 — Agent: read + rank split index | **Done** | `loadIndex` v2, `rankBySituation`, `evidenceScore`, schema-version rejection |
+| WB3 — Evidence query construction | **Done** | `buildEvidenceQuery(analysis)` with provenance; unit-tested |
+| WB4 — Retrieval orchestration + flag | **Done** | `LINKROWTH_RETRIEVAL_STRATEGY`, `LINKROWTH_RETRIEVAL_CANDIDATE_POOL`, split path in `retrieveContext` |
+| WB5 — Trace schema v2 | **Done** | `RETRIEVAL_TRACE_SCHEMA_VERSION = 2`, per-channel scores on hits, `db/migrations/0004_retrieval_trace_v2.sql` |
+| WB6 — Docs | **Done** | `retrieval-layer.md`, `retrieval-query-construction.md`, design doc Phase 2 bullets updated |
+| Evaluation harness + labeled set | **Not started** | No `phase2.jsonl`, no `evalCli.ts`, no `npm run eval` in distill |
+| Production selection change | **Blocked** | Remains on situation channel only; `single` stays the default until eval passes |
 
 ---
 
@@ -36,22 +56,33 @@ block on Phase 1.
 
 ---
 
-## Current state (what Phase 2 changes)
+## Current state
 
-One vector per artifact, built from a flattened string:
+### Baseline (`LINKROWTH_RETRIEVAL_STRATEGY=single`, default)
 
-- `distill/src/index/vector.ts` → `retrievalText()` concatenates
-  `title, domains, stack, problem, approach, tradeoff, claimableLine, paths`.
-- `distill/src/index/store.ts` → `buildIndex()` / `saveIndex()` write one
-  `experiences.vector` BLOB plus `index_meta`.
-- `agent/src/context/experience/store.ts` → `loadIndex()` / `rankIndex()` read
-  that single vector and cosine-rank.
-- `agent/src/context/retrieveContext.ts` → embeds `situationQuery`, calls
-  `rankIndex(index, queryVector, k*3)`, then `evaluateHits()`.
+Unchanged. One combined vector per artifact (`retrievalText()`), ranked by
+`rankIndex()`, same eligibility filters and injection path as before.
 
-Phase 2 splits the single vector into two and adds a deterministic
-analysis-derived query for a **later** (Phase 4) evidence-scoring stage — the
-query is *defined and traced* in Phase 2, not yet used to gate selection.
+### Split strategy (`LINKROWTH_RETRIEVAL_STRATEGY=split`)
+
+Implemented:
+
+- `distill/src/index/vector.ts` → `situationText()` and `evidenceText()` alongside
+  `retrievalText()`; `paths` dropped from both semantic channels (D1).
+- `distill/src/index/store.ts` → `buildIndex()` embeds all three texts per artifact
+  (batched interleaved pass); `saveIndex()` writes `situation_vector`,
+  `evidence_vector`, and `schema_version = 2`.
+- `agent/src/context/experience/store.ts` → `loadIndex()` reads v2 BLOBs; rejects
+  schema mismatch under `split`; `rankBySituation()` for candidate gen;
+  `evidenceScore()` annotates traces only.
+- `agent/src/context/retrieveContext.ts` → embeds `situationQuery`, ranks by
+  situation cosine over a widened `candidatePoolSize`, then `evaluateHits()`.
+  Evidence cosine is computed and traced when `analysis` is passed (tests/eval
+  injection point); production still injects on situation channel only.
+
+The deterministic analysis-derived evidence query (`buildEvidenceQuery`) is
+defined and traced in Phase 2 but not yet used to gate selection — that wiring
+is Phase 4.
 
 ---
 
@@ -161,73 +192,65 @@ context rather than mis-scoring.
 
 ## Work breakdown
 
-### WB1 — Distill: build two vectors
+### WB1 — Distill: build two vectors ✅
 
-- `distill/src/index/vector.ts`: add `situationText(artifact)` and
-  `evidenceText(artifact)` alongside the existing `retrievalText()` (keep the
-  latter for the `single` strategy). Keep `cosineSimilarity()` shared.
-- `distill/src/index/store.ts`: extend `buildIndex()` to embed both texts per
-  artifact (two `embed()` passes or one batched pass over interleaved texts),
-  and `saveIndex()` to write `situation_vector` + `evidence_vector` and
-  `schema_version = 2`. Add `EXPERIENCE_INDEX_SCHEMA_VERSION` constant.
-- `distill/src/index/run.ts`: no interface change; it calls `buildIndex` /
-  `saveIndex`. Confirm batching still holds for two vectors.
-- `distill/src/index/searchCli.ts`: add a `--channel situation|evidence` option
-  so the debug CLI can inspect either channel's raw cosine.
-- `distill/src/types.ts`: add the v2 index/embedding shapes
-  (`situationVector` / `evidenceVector` on `IndexedExperience`).
+- [x] `distill/src/index/vector.ts`: `situationText(artifact)` and
+  `evidenceText(artifact)` alongside `retrievalText()` (kept for `single`).
+  `cosineSimilarity()` shared.
+- [x] `distill/src/index/store.ts`: `buildIndex()` embeds all three texts per
+  artifact via one batched interleaved pass; `saveIndex()` writes
+  `situation_vector` + `evidence_vector` and `schema_version = 2`.
+  `EXPERIENCE_INDEX_SCHEMA_VERSION = 2` in `distill/src/types.ts`.
+- [x] `distill/src/index/run.ts`: no interface change; batching confirmed for
+  three vectors per artifact.
+- [x] `distill/src/index/searchCli.ts`: `--channel single|situation|evidence`.
+- [x] `distill/src/types.ts`: v2 shapes (`situationVector` / `evidenceVector` on
+  `IndexedExperience`).
 
-### WB2 — Agent: read + rank the split index
+### WB2 — Agent: read + rank the split index ✅
 
-- `agent/src/context/experience/types.ts`: mirror the v2 shapes
-  (`situationVector`, `evidenceVector`, `schemaVersion`).
-- `agent/src/context/experience/store.ts`: `loadIndex()` reads both BLOBs +
-  `schema_version`; reject `!= 2` under the `split` strategy. Add
-  `rankBySituation(index, queryVector, k)` (cosine over `situationVector`) and a
-  helper `evidenceScore(item, evidenceVector)` (cosine over `evidenceVector`)
-  used only to annotate the trace in Phase 2.
-- `agent/src/context/experience/vector.ts`: mirror `situationText` /
-  `evidenceText` for alignment parity (documented note: query alignment comes
-  from model semantics, not identical formatting).
+- [x] `agent/src/context/experience/types.ts`: v2 shapes (`situationVector`,
+  `evidenceVector`, `schemaVersion`).
+- [x] `agent/src/context/experience/store.ts`: `loadIndex()` reads both BLOBs +
+  `schema_version`; rejects `!= 2` under `split`. `rankBySituation()` and
+  `evidenceScore()` (trace annotation only in Phase 2).
+- [x] `agent/src/context/experience/vector.ts`: mirrored `situationText` /
+  `evidenceText` for alignment parity.
 
-### WB3 — Agent: query construction for the evidence channel
+### WB3 — Agent: query construction for the evidence channel ✅
 
-- `agent/src/context/queryConstruction.ts`: add `buildEvidenceQuery(analysis)`
-  returning `{ evidenceQuery, presentFields, constructedLength }`. Pure,
-  synchronous, unit-tested. `buildRetrievalQuery(post)` is unchanged.
+- [x] `agent/src/context/queryConstruction.ts`: `buildEvidenceQuery(analysis)`
+  returning `{ evidenceQuery, provenance, constructedLength }`. Pure,
+  synchronous, unit-tested. `buildRetrievalQuery(post)` unchanged.
 
-### WB4 — Agent: retrieval orchestration behind the flag
+### WB4 — Agent: retrieval orchestration behind the flag ✅
 
-- `agent/src/context/retrieveContext.ts`:
-  - Resolve `LINKROWTH_RETRIEVAL_STRATEGY`.
+- [x] `agent/src/context/retrieveContext.ts`:
+  - Resolves `LINKROWTH_RETRIEVAL_STRATEGY` (`single` default, `split` for Phase 2).
   - `single`: unchanged behavior.
   - `split`: embed `situationQuery` → `rankBySituation(..., candidatePoolSize)`
-    → `evaluateHits()` (unchanged eligibility) → **still inject on situation
-    channel only**. If an analysis is available (test/eval injection point),
-    compute each candidate's evidence cosine and attach it to the trace hit.
-  - Keep the current graceful-degradation ladder
-    (`empty_query`, `no_index`, `embed_failed`, `no_survivors`).
+    → `evaluateHits()` → **still inject on situation channel only**. When
+    `analysis` is provided (test/eval injection), evidence cosine is computed and
+    attached to each trace hit.
+  - Graceful-degradation ladder preserved (`empty_query`, `no_index`,
+    `embed_failed`, `no_survivors`).
 
-### WB5 — Traces: version bump + per-channel signals
+### WB5 — Traces: version bump + per-channel signals ✅
 
-- `agent/src/persistence/retrievalTrace/types.ts`: bump
-  `RETRIEVAL_TRACE_SCHEMA_VERSION` to `2`; add optional
-  `situationScore` / `evidenceScore` to `RetrievalTraceHit`, `strategy` and
-  index `schemaVersion` to params/index meta, and the evidence-query provenance.
-- `agent/src/persistence/retrievalTrace/repository.ts` +
-  `db/migrations/`: additive migration for the new nullable columns/JSON so
-  v1 traces remain readable.
+- [x] `agent/src/persistence/retrievalTrace/types.ts`: `RETRIEVAL_TRACE_SCHEMA_VERSION = 2`;
+  optional `situationScore` / `evidenceScore` on `RetrievalTraceHit`; `strategy`,
+  `schemaVersion`, and evidence-query provenance on trace params/index meta.
+- [x] `db/migrations/0004_retrieval_trace_v2.sql`: documents v2 JSONB fields; no
+  DDL change needed (candidates/params/timings are JSONB). v1 traces remain readable.
 
-### WB6 — Docs
+### WB6 — Docs ✅
 
-- Update [`retrieval-layer.md`](./retrieval-layer.md): v2 schema, the two
-  channels, the strategy flag, and the new CLI option.
-- Update [`retrieval-matching-design.md`](./retrieval-matching-design.md):
-  mark Phase 2 as in-progress and fix the stale "post body plus the author's
-  headline" baseline note (already superseded by Tier A).
-- Add the missing [`retrieval-query-construction.md`](./retrieval-query-construction.md)
-  referenced by both docs, covering `buildRetrievalQuery` and the new
-  `buildEvidenceQuery`.
+- [x] [`retrieval-layer.md`](./retrieval-layer.md): v2 schema, two channels,
+  strategy flag, CLI `--channel`.
+- [x] [`retrieval-matching-design.md`](./retrieval-matching-design.md): Phase 2
+  marked in-progress with implementation checkmarks on the first four bullets.
+- [x] [`retrieval-query-construction.md`](./retrieval-query-construction.md):
+  covers `buildRetrievalQuery` and `buildEvidenceQuery`.
 
 ---
 
@@ -243,13 +266,13 @@ keep their meaning.
 
 ---
 
-## Evaluation: compare against the baseline before changing production
+## Evaluation: compare against the baseline before changing production *(not started)*
 
 This is the gate before any production selection change (design acceptance
 criteria 1–8). Nothing in Phase 2 alters injected proof points until this
-passes.
+passes. **This is the only remaining Phase 2 work.**
 
-### Labeled set (bootstrap)
+### Labeled set (bootstrap) — not started
 
 Store under `distill/data/eval/phase2.jsonl` (gitignored like other index data;
 a tiny redacted sample may be committed under `distill/src/index/__fixtures__`
@@ -281,12 +304,13 @@ matches without shared vocabulary, problem-only wording, and no-match posts.
 | Safety pass rate | private/low-confidence/empty-claim always excluded (must be 100%). |
 | Abstention accuracy | no injection on `shouldAbstain` posts. |
 
-### Harness
+### Harness — not started
 
-- A script (e.g. `distill/src/index/evalCli.ts`, `npm run eval`) builds a v2
-  index from the eval artifacts, runs both strategies over the labeled posts via
-  the real `retrieveContext` seam (injecting `loadIndex`/`embedQuery` doubles or
-  a cached embedding fixture to keep CI offline), and prints a comparison table.
+- [ ] A script (e.g. `distill/src/index/evalCli.ts`, `npm run eval` in distill)
+  builds a v2 index from the eval artifacts, runs both strategies over the
+  labeled posts via the real `retrieveContext` seam (injecting `loadIndex`/
+  `embedQuery` doubles or a cached embedding fixture to keep CI offline), and
+  prints a comparison table.
 - Success bar to proceed to Phase 3/4: split **preserves or improves**
   recall@N and precision@k over baseline, keeps 100% safety exclusion, and shows
   measurable evidence-cosine separation between applicable evidence and hard
@@ -299,16 +323,16 @@ matches without shared vocabulary, problem-only wording, and no-match posts.
 
 Phase 2 is offline/library code (no UI), so verification is automated:
 
-- Unit: `situationText` / `evidenceText` composition;
+- [x] Unit: `situationText` / `evidenceText` composition;
   `buildEvidenceQuery` field mapping and provenance; `rankBySituation`;
   `loadIndex` schema-version acceptance/rejection; strategy resolution.
-- Integration: `retrieveContext.test.ts` gains `split`-strategy cases
-  (injected v2 index + embed double) asserting situation-only injection,
-  evidence scores present on traces, and graceful fallback on version mismatch.
-- Store round-trip: `saveIndex` → `loadIndex` for v2 (two BLOBs, `schema_version`).
-- Eval harness run on the fixture set, checked into CI as a smoke test with a
+- [x] Integration: `retrieveContext.test.ts` `split`-strategy cases (injected
+  v2 index + embed double) asserting situation-only injection, evidence scores
+  on traces, and graceful fallback on version mismatch.
+- [x] Store round-trip: `saveIndex` → `loadIndex` for v2 (two BLOBs, `schema_version`).
+- [ ] Eval harness run on the fixture set, checked into CI as a smoke test with a
   frozen embedding fixture (no live API in CI).
-- Regression: with `LINKROWTH_RETRIEVAL_STRATEGY=single` (default), all existing
+- [x] Regression: with `LINKROWTH_RETRIEVAL_STRATEGY=single` (default), existing
   tests pass unchanged — the baseline path is untouched.
 
 Existing suites to keep green: `agent/src/context/retrieveContext.test.ts`,
@@ -321,15 +345,16 @@ Existing suites to keep green: `agent/src/context/retrieveContext.test.ts`,
 
 ## Rollout order (PR stack)
 
-1. **PR A — schema + distill build:** v2 schema constant, `situationText` /
+1. **PR A — schema + distill build** ✅ — v2 schema constant, `situationText` /
    `evidenceText`, `buildIndex` / `saveIndex` two-vector write, CLI `--channel`.
-   (Distill-only; agent still reads v1 under `single`.)
-2. **PR B — agent read + split ranking behind flag:** `loadIndex` v2,
+2. **PR B — agent read + split ranking behind flag** ✅ — `loadIndex` v2,
    `rankBySituation`, strategy flag, `retrieveContext` split path injecting on
    situation only. Trace schema bump + migration.
-3. **PR C — evidence query + eval harness:** `buildEvidenceQuery`, evidence-score
-   trace annotation, `npm run eval`, labeled fixture set, baseline comparison.
-4. **PR D — docs:** update the three retrieval docs; record measured numbers.
+3. **PR C — evidence query + eval harness** *(partial)* — `buildEvidenceQuery` and
+   evidence-score trace annotation are done; labeled fixture set, `evalCli.ts`,
+   and baseline comparison remain.
+4. **PR D — docs** ✅ — three retrieval docs updated; measured numbers pending
+   eval harness (PR C remainder).
 
 Each PR is independently reviewable and leaves `single` as the shipped default.
 No production selection change lands until PR C's comparison meets the success
@@ -351,11 +376,14 @@ bar.
 ## Open questions
 
 1. **`candidatePoolSize`** — set by step 5 recall curves; default is a
-   placeholder (`k * 4`).
-2. **Two embed passes vs one** — batching both channels in a single `embed()`
-   call halves round-trips but needs careful index bookkeeping; decide in PR A.
+   placeholder (`k * 4`). *(Implemented as `LINKROWTH_RETRIEVAL_CANDIDATE_POOL`,
+   default `k * 4`; tuning deferred to eval.)*
+2. ~~**Two embed passes vs one**~~ — **Resolved:** single batched interleaved
+   `embed()` call over `[combined, situation, evidence]` per artifact (PR A).
 3. **Committing an eval fixture** — how much redacted labeled data can live in
-   the repo for CI vs staying in gitignored `distill/data/eval/`.
+   the repo for CI vs staying in gitignored `distill/data/eval/`. *(Still open;
+   blocks eval harness.)*
 4. **Evidence query at production time** — Phase 2 keeps it offline-only; confirm
    we do not want an interim "post-derived pseudo-evidence" query before Phase 4
-   moves ordering.
+   moves ordering. *(Confirmed: `analysis` is only passed via
+   `RetrieveContextOptions` in tests/eval; production path leaves it undefined.)*

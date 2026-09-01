@@ -177,6 +177,9 @@ the retrieval trace (`RetrievalTrace`):
 
 ## Environment variables
 
+See [`retrieval-params.md`](./retrieval-params.md) for the full parameter
+reference including ranking, index, and trace knobs.
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `LINKROWTH_RETRIEVAL_QUERY_CONSTRUCTION` | `a` | `a` (Tier A cleaning) or `raw` (headline+body blob baseline) |
