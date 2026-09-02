@@ -1,4 +1,4 @@
-import type { RankedArtifact } from "./types";
+import type { ExperienceArtifact, IndexedExperience, RankedArtifact } from "./types";
 
 const ALLOWED_SHAREABILITY = new Set(["public", "anonymized"]);
 const ALLOWED_CONFIDENCE = new Set(["high", "medium"]);
@@ -20,6 +20,23 @@ export interface HitDecision {
 }
 
 /**
+ * Hard eligibility for injection as a proof point (Phase 1 prefilter).
+ * Score floors and top-k caps are applied later by evaluateHits.
+ */
+export function isInjectableArtifact(artifact: ExperienceArtifact): boolean {
+  return (
+    ALLOWED_SHAREABILITY.has(artifact.shareability) &&
+    ALLOWED_CONFIDENCE.has(artifact.confidence) &&
+    Boolean(artifact.claimableLine?.trim())
+  );
+}
+
+/** Keep only indexed rows that could become proof points. */
+export function filterInjectableItems(items: IndexedExperience[]): IndexedExperience[] {
+  return items.filter((item) => isInjectableArtifact(item.artifact));
+}
+
+/**
  * Single source of truth for retrieval selection. Annotates every hit with a
  * keep/drop decision so both selection and observability read from one place.
  * Filters, in order:
@@ -28,6 +45,9 @@ export interface HitDecision {
  * - Drop below the cosine score floor (irrelevant hits are actively harmful).
  * - Drop empty claimable lines.
  * - Keep only the first k survivors (rest marked "over_k").
+ *
+ * Phase 1 prefilters the same eligibility rules before candidate pool caps;
+ * these checks remain as defense in depth.
  */
 export function evaluateHits(
   hits: RankedArtifact[],

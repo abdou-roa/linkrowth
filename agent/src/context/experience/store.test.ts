@@ -320,6 +320,46 @@ describe("experience index store (v3)", () => {
     }
   });
 
+  it("rankIndex and rankBySituation exclude non-injectable artifacts before the pool cap", () => {
+    const index: ExperienceIndex = {
+      indexedAt: "2026-08-27T00:00:00Z",
+      schemaVersion: EXPERIENCE_INDEX_SCHEMA_VERSION,
+      embedding: { provider: "test", model: "fake", dimensions: 3 },
+      count: 3,
+      items: [
+        {
+          id: "private-top",
+          vector: [1, 0, 0],
+          situationVector: [1, 0, 0],
+          evidenceVector: [1, 0, 0],
+          artifact: artifact("private-top", "secret", { shareability: "private" }),
+        },
+        {
+          id: "low-top",
+          vector: [0.99, 0.01, 0],
+          situationVector: [0.99, 0.01, 0],
+          evidenceVector: [0.99, 0.01, 0],
+          artifact: artifact("low-top", "low conf", { confidence: "low" }),
+        },
+        {
+          id: "public-third",
+          vector: [0.9, 0.1, 0],
+          situationVector: [0.9, 0.1, 0],
+          evidenceVector: [0.9, 0.1, 0],
+          artifact: artifact("public-third", "public claim"),
+        },
+      ],
+    };
+
+    const combined = rankIndex(index, [1, 0, 0], 1);
+    assert.equal(combined.length, 1);
+    assert.equal(combined[0]?.artifact.id, "public-third");
+
+    const situation = rankBySituation(index, [1, 0, 0], 1);
+    assert.equal(situation.length, 1);
+    assert.equal(situation[0]?.artifact.id, "public-third");
+  });
+
   it("evidenceScore returns cosine between item evidenceVector and query", () => {
     const item: IndexedExperience = {
       id: "x",
@@ -405,6 +445,73 @@ describe("experience index store (v3)", () => {
       assert.ok(hits.length >= 1);
       assert.equal(hits[0]?.artifact.id, "postgres");
       assert.ok(hits[0]!.bm25Score < 0, "bm25 scores are negative; lower = better");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rankByLexical over-fetches and skips non-injectable FTS hits", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-experience-index-fts-elig-"));
+    const dbPath = join(dir, "experience-index.db");
+
+    try {
+      const privateHit = artifact("private-jobs", "Postgres private jobs", {
+        domains: ["postgres", "jobs"],
+        stack: ["Postgres"],
+        problem: "Need durable suggestion jobs privately",
+        approach: "Queued rows",
+        shareability: "private",
+      });
+      const lowHit = artifact("low-jobs", "Postgres low confidence jobs", {
+        domains: ["postgres", "jobs"],
+        stack: ["Postgres"],
+        problem: "Need durable suggestion jobs low",
+        approach: "Queued rows",
+        confidence: "low",
+      });
+      const publicHit = artifact("public-jobs", "Postgres public jobs", {
+        domains: ["postgres", "jobs"],
+        stack: ["Postgres"],
+        problem: "Need durable suggestion jobs publicly",
+        approach: "Queued rows with claim semantics",
+      });
+
+      const index: ExperienceIndex = {
+        indexedAt: "2026-08-27T00:00:00Z",
+        schemaVersion: EXPERIENCE_INDEX_SCHEMA_VERSION,
+        embedding: { provider: "test", model: "fake", dimensions: 3 },
+        count: 3,
+        items: [
+          {
+            id: "private-jobs",
+            vector: [1, 0, 0],
+            situationVector: [1, 0, 0],
+            evidenceVector: [1, 0, 0],
+            artifact: privateHit,
+          },
+          {
+            id: "low-jobs",
+            vector: [1, 0, 0],
+            situationVector: [1, 0, 0],
+            evidenceVector: [1, 0, 0],
+            artifact: lowHit,
+          },
+          {
+            id: "public-jobs",
+            vector: [1, 0, 0],
+            situationVector: [1, 0, 0],
+            evidenceVector: [1, 0, 0],
+            artifact: publicHit,
+          },
+        ],
+      };
+
+      writeFixtureIndexV3(dbPath, index);
+
+      const hits = rankByLexical(dbPath, "postgres durable jobs", 1);
+      assert.equal(hits.length, 1);
+      assert.equal(hits[0]?.artifact.id, "public-jobs");
+      assert.equal(hits[0]?.artifact.shareability, "public");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

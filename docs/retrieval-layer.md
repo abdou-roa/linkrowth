@@ -14,15 +14,17 @@ OFFLINE (distill/)
         ↓ retrievalText() / situationText() / evidenceText() per artifact
         ↓ embed() — RETRIEVAL_DOCUMENT (Gemini) or standard embed (OpenAI)
         ↓ Float32 vectors (combined + situation + evidence) + artifact JSON
-  experience-index.db (SQLite, schema_version=2)
+  experience-index.db (SQLite, schema_version=3)
 
 ONLINE (agent/)
   post.text
         ↓ buildRetrievalQuery() → { situationQuery, headline }
         ↓ embedQuery(situationQuery) — RETRIEVAL_QUERY (Gemini) or same embed API (OpenAI)
         ↓ query vector
-        ↓ rankIndex() [single] or rankBySituation() [split]
-        ↓ evaluateHits() — filter, top-k
+        ↓ rank injectable-only candidates (pool = CANDIDATE_POOL)
+             rankIndex() [single] | rankBySituation() [split]
+             or situation + BM25 → RRF [hybrid]
+        ↓ evaluateHits() — defense-in-depth eligibility, score floor, top-k
         ↓ claimableLines → UserContext.proofPoints
         ↓ engage(post, enrichedContext)
 ```

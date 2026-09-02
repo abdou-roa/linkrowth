@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExperienceArtifact, RankedArtifact } from "./types";
-import { evaluateHits, mergeProofPoints, selectClaimableHits } from "./select";
+import {
+  evaluateHits,
+  filterInjectableItems,
+  isInjectableArtifact,
+  mergeProofPoints,
+  selectClaimableHits,
+} from "./select";
 
 const artifact = (
   id: string,
@@ -33,6 +39,56 @@ const hit = (
 ): RankedArtifact => ({
   score,
   artifact: artifact(line, line, extra),
+});
+
+describe("isInjectableArtifact", () => {
+  it("accepts public/anonymized high/medium with a claimable line", () => {
+    assert.equal(isInjectableArtifact(artifact("a", "ok")), true);
+    assert.equal(
+      isInjectableArtifact(
+        artifact("b", "ok", { shareability: "anonymized", confidence: "medium" })
+      ),
+      true
+    );
+  });
+
+  it("rejects private, low confidence, and empty claimable lines", () => {
+    assert.equal(
+      isInjectableArtifact(artifact("p", "secret", { shareability: "private" })),
+      false
+    );
+    assert.equal(
+      isInjectableArtifact(artifact("l", "weak", { confidence: "low" })),
+      false
+    );
+    assert.equal(
+      isInjectableArtifact(artifact("e", "   ", { claimableLine: "   " })),
+      false
+    );
+  });
+
+  it("filterInjectableItems keeps only injectable indexed rows", () => {
+    const items = [
+      {
+        id: "ok",
+        vector: [1],
+        situationVector: [1],
+        evidenceVector: [1],
+        artifact: artifact("ok", "public claim"),
+      },
+      {
+        id: "bad",
+        vector: [1],
+        situationVector: [1],
+        evidenceVector: [1],
+        artifact: artifact("bad", "secret", { shareability: "private" }),
+      },
+    ];
+    assert.deepEqual(
+      filterInjectableItems(items).map((i) => i.id),
+      ["ok"]
+    );
+  });
 });
 
 describe("selectClaimableHits", () => {

@@ -7,10 +7,14 @@ import type {
   RankedArtifact,
 } from "./types";
 import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "./types";
+import { isInjectableArtifact } from "./select";
 import { buildFts5Query, DEFAULT_BM25_WEIGHTS, type Bm25Weights } from "./fts";
 import { cosineSimilarity } from "./vector";
 
 export { buildFts5Query, fuseRRF, DEFAULT_BM25_WEIGHTS, type Bm25Weights } from "./fts";
+
+/** FTS over-fetch multiplier so non-injectable rows do not starve the lexical pool. */
+const LEXICAL_OVERFETCH_MULTIPLIER = 3;
 
 function decodeVector(blob: Buffer): number[] {
   const aligned = Buffer.from(blob);
@@ -96,6 +100,7 @@ export function rankIndex(
   if (k <= 0 || index.items.length === 0) return [];
 
   return index.items
+    .filter((item) => isInjectableArtifact(item.artifact))
     .map((item) => ({
       score: cosineSimilarity(queryVector, item.vector),
       artifact: item.artifact,
@@ -113,6 +118,7 @@ export function rankBySituation(
   if (k <= 0 || index.items.length === 0) return [];
 
   return index.items
+    .filter((item) => isInjectableArtifact(item.artifact))
     .map((item) => ({
       score: cosineSimilarity(queryVector, item.situationVector),
       artifact: item.artifact,
@@ -133,6 +139,9 @@ export function evidenceScore(item: IndexedExperience, evidenceQueryVector: numb
 /**
  * BM25 lexical search over the FTS5 index. Returns [] on empty query or FTS error.
  * bm25() returns negative values; lower (more negative) = better match.
+ *
+ * Over-fetches then keeps only injectable artifacts so non-injectable FTS hits
+ * do not consume the caller-requested pool (Phase 1).
  */
 export function rankByLexical(
   dbPath: string,
@@ -142,6 +151,8 @@ export function rankByLexical(
 ): LexicalRankedArtifact[] {
   const query = buildFts5Query(fts5Query);
   if (!query || k <= 0) return [];
+
+  const fetchLimit = Math.max(k * LEXICAL_OVERFETCH_MULTIPLIER, k);
 
   let db: Database.Database;
   try {
@@ -164,7 +175,7 @@ export function rankByLexical(
       )
       .all({
         query,
-        k,
+        k: fetchLimit,
         wTitle: weights.title,
         wDomains: weights.domains,
         wStack: weights.stack,
@@ -173,10 +184,14 @@ export function rankByLexical(
         wPaths: weights.paths,
       }) as Array<{ id: string; score: number; artifact_json: string }>;
 
-    return rows.map((row) => ({
-      bm25Score: row.score,
-      artifact: JSON.parse(row.artifact_json) as ExperienceArtifact,
-    }));
+    const injectable: LexicalRankedArtifact[] = [];
+    for (const row of rows) {
+      const artifact = JSON.parse(row.artifact_json) as ExperienceArtifact;
+      if (!isInjectableArtifact(artifact)) continue;
+      injectable.push({ bm25Score: row.score, artifact });
+      if (injectable.length >= k) break;
+    }
+    return injectable;
   } catch {
     return [];
   } finally {

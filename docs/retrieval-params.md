@@ -40,17 +40,20 @@ embedded.
 
 | Variable | Default | Values | Effect |
 | --- | --- | --- | --- |
-| `LINKROWTH_RETRIEVAL_STRATEGY` | `single` | `single` → combined `vector`<br>`split`, `2` → `situation_vector` | Which index column cosine-ranks against at query time. |
+| `LINKROWTH_RETRIEVAL_STRATEGY` | `single` | `single` → combined `vector`<br>`split`, `2` → `situation_vector`<br>`hybrid`, `3` → situation cosine + BM25 RRF | Which ranking path runs at query time. |
 | `LINKROWTH_RETRIEVAL_K` | `5` | positive integer | Max proof points injected **after** post-rank filters. |
-| `LINKROWTH_RETRIEVAL_MIN_SCORE` | `0.3` | float | Cosine score floor. Hits below this are dropped. |
-| `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` | `k × 4` | positive integer | **Split strategy only.** Situation-channel recall pool size before eligibility filters and the `k` cap. |
+| `LINKROWTH_RETRIEVAL_MIN_SCORE` | `0.3` | float | Cosine score floor (ignored for hybrid RRF scores). Hits below this are dropped. |
+| `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` | `k × 4` | positive integer | **All strategies (Phase 1).** Recall pool size after eligibility prefilter and before the `k` cap. For hybrid this sizes the semantic channel (`semanticPoolSize`). |
+| `LINKROWTH_RETRIEVAL_LEXICAL_POOL` | `k × 4` | positive integer | **Hybrid only.** BM25 candidate pool size after over-fetch + injectable filter. |
 
-**Pool sizes not exposed as env vars:**
+**Effective pool sizes:**
 
-| Strategy | Pre-filter pool size | Source |
+| Strategy | Pool | Source |
 | --- | --- | --- |
-| `single` | `max(k × 3, k)` | hardcoded in `retrieveContext.ts` |
-| `split` | `max(candidatePoolSize, k)` | `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` or `k × 4` |
+| `single` | `max(candidatePoolSize, k)` | `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` or `k × 4` |
+| `split` | `max(candidatePoolSize, k)` | same |
+| `hybrid` semantic | `max(candidatePoolSize, k)` | same |
+| `hybrid` lexical | `lexicalPoolSize` | `LINKROWTH_RETRIEVAL_LEXICAL_POOL` or `k × 4` |
 
 ### Index and embedding
 
@@ -85,14 +88,16 @@ wired through `runEngageWithStatus` today.
 | Option | Type | Env equivalent | Effect |
 | --- | --- | --- | --- |
 | `queryConstruction` | `"raw"` \| `"a"` | `LINKROWTH_RETRIEVAL_QUERY_CONSTRUCTION` | Query construction tier. |
-| `strategy` | `"single"` \| `"split"` | `LINKROWTH_RETRIEVAL_STRATEGY` | Retrieval strategy. |
+| `strategy` | `"single"` \| `"split"` \| `"hybrid"` | `LINKROWTH_RETRIEVAL_STRATEGY` | Retrieval strategy. |
 | `k` | `number` | `LINKROWTH_RETRIEVAL_K` | Max hits after filtering. |
 | `minScore` | `number` | `LINKROWTH_RETRIEVAL_MIN_SCORE` | Cosine score floor. |
-| `candidatePoolSize` | `number` | `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` | Split-strategy recall pool. |
+| `candidatePoolSize` | `number` | `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` | Recall pool for all strategies (Phase 1). |
+| `lexicalPoolSize` | `number` | `LINKROWTH_RETRIEVAL_LEXICAL_POOL` | Hybrid BM25 pool size. |
 | `indexPath` | `string` | `LINKROWTH_EXPERIENCE_INDEX_DB` | Override index file path. |
 | `analysis` | `AnalysisArtifact` | — | **Split only.** Enables evidence-cosine trace annotation via `buildEvidenceQuery()`. Does not affect selection in Phase 2. |
 | `embedQuery` | function | — | Test double for embedding. |
 | `loadIndex` | function | — | Test double for index load. |
+| `lexicalSearch` | function | — | Test double for BM25 search. |
 | `traceSink` | `RetrievalTraceSink` | — | Custom trace sink (e.g. in-memory capture). |
 
 **Skipping retrieval entirely:** pass `context` to `runEngageWithStatus()` —
@@ -102,8 +107,14 @@ retrieval is bypassed and the supplied context is used as-is.
 
 ## Hardcoded filters
 
-These are not configurable via env. Applied in order by `evaluateHits()` in
-`agent/src/context/experience/select.ts` after cosine ranking:
+Eligibility (shareability, confidence, non-empty `claimableLine`) is applied
+**before** candidate pool caps via `isInjectableArtifact()` in
+`agent/src/context/experience/select.ts` (Phase 1). Semantic rankers skip
+non-injectable rows entirely; lexical search over-fetches FTS hits, keeps
+injectable ones, then truncates to the pool size.
+
+The same eligibility checks run again in `evaluateHits()` as defense in depth,
+together with score floor and top-k:
 
 | # | Filter | Kept | Dropped (`dropReason`) |
 | --- | --- | --- | --- |

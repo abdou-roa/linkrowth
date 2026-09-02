@@ -89,9 +89,8 @@ export interface RetrieveContextOptions {
    */
   analysis?: AnalysisArtifact;
   /**
-   * Candidate pool size for the split strategy (situation-channel recall pool
-   * before eligibility + k cap). Defaults to LINKROWTH_RETRIEVAL_CANDIDATE_POOL
-   * or k * 4.
+   * Candidate pool size before eligibility + k cap (all strategies, Phase 1).
+   * Defaults to LINKROWTH_RETRIEVAL_CANDIDATE_POOL or k * 4.
    */
   candidatePoolSize?: number;
   /** RRF rank constant (hybrid strategy). Default LINKROWTH_RETRIEVAL_RRF_C or 60. */
@@ -180,7 +179,9 @@ function warnIncompatibleIndex(schemaVersion: number): boolean {
  * Strategy `single` (default): unchanged cosine baseline over the combined vector.
  * Strategy `split`: rank by situation cosine; annotate traces with evidence scores.
  * Strategy `hybrid`: situation cosine + BM25 via FTS5, fused with RRF.
- * Production selection is unchanged in Phase 3 — `single` remains the default.
+ * Phase 1: all strategies prefilter injectable artifacts before pool caps and
+ * share `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` (default k × 4). Production
+ * selection default remains `single`.
  */
 export async function retrieveContext(
   post: Post,
@@ -209,6 +210,7 @@ export async function retrieveContext(
     k,
     minScore,
     strategy,
+    candidatePoolSize,
     queryConstruction: {
       tier: constructed.tier,
       fallback: constructed.fallback,
@@ -216,9 +218,6 @@ export async function retrieveContext(
       constructedLength: constructed.constructedLength,
     },
   };
-  if (strategy === "split") {
-    params.candidatePoolSize = candidatePoolSize;
-  }
   if (strategy === "hybrid") {
     params.semanticPoolSize = Math.max(candidatePoolSize, k);
     params.lexicalPoolSize = lexicalPoolSize;
@@ -350,8 +349,7 @@ export async function retrieveContext(
     fusionById = new Map(fused.map((f) => [f.artifact.id, f]));
     rawHits = fused.map((f) => ({ score: f.rrfScore, artifact: f.artifact }));
   } else {
-    const poolSize =
-      strategy === "split" ? Math.max(candidatePoolSize, k) : Math.max(k * 3, k);
+    const poolSize = Math.max(candidatePoolSize, k);
     rawHits =
       strategy === "split"
         ? rankBySituation(index, queryVector, poolSize)
