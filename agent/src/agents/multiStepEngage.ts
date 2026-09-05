@@ -71,10 +71,26 @@ export class MultiStepEngageAgent implements Agent {
       state.status = "in_progress";
     }
 
-    // 3. Draft initial comment from the analysis (+ answered clarification)
+    // 3. Synchronize analysis-aware context only after the HITL gate.
+    if (input.prepareContext) {
+      if (!state.analysis) {
+        throw new Error("Context preparation requires completed analysis");
+      }
+      state = {
+        ...state,
+        context: await input.prepareContext({
+          post: state.post,
+          analysis: state.analysis,
+          clarification: state.clarification,
+          context: state.context,
+        }),
+      };
+    }
+
+    // 4. Draft initial comment from the analysis (+ answered clarification)
     state = await this.executeStep(drafterStep, state);
 
-    // 4. Refine ↔ redraft until approved or attempts are exhausted
+    // 5. Refine ↔ redraft until approved or attempts are exhausted
     while (state.attempts <= MAX_REFINE_ATTEMPTS) {
       state = await this.executeStep(refinerStep, state);
 

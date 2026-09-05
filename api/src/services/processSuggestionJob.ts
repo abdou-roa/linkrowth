@@ -92,6 +92,7 @@ export async function continueSuggestionJobAfterClarification(
     clarification: toAnsweredClarification(resumed.clarification, answer),
     // Analysis was validated when the job was paused for clarification.
     analysis: resumed.checkpoint.analysis as never,
+    retrievalShortlist: resumed.checkpoint.retrievalShortlist as never,
   });
 
   if (outcome.kind === "awaiting_clarification") {

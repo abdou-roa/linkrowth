@@ -75,11 +75,13 @@ export interface ClarificationCheckpointInput {
   analysis: unknown;
   clarification: ClarificationSummary;
   steps: unknown[];
+  retrievalShortlist?: unknown;
 }
 
 export interface JobCheckpoint {
   analysis: unknown;
   steps: unknown[];
+  retrievalShortlist?: unknown;
 }
 
 export interface ResumedSuggestionJob {

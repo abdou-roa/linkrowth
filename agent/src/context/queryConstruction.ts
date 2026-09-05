@@ -1,5 +1,5 @@
 import type { Post } from "../core/types";
-import type { AnalysisArtifact } from "../steps/types";
+import type { AnalysisArtifact, HumanClarification } from "../steps/types";
 import { answerableQuestions } from "../steps/types";
 
 /** Query-construction strategies. `raw` is the pre-Tier-A blob baseline. */
@@ -183,6 +183,7 @@ export interface EvidenceQueryProvenance {
   hasAcknowledgedPoint: boolean;
   answerableQuestionCount: number;
   unspokenTradeoffCount: number;
+  hasClarificationAnswer: boolean;
 }
 
 export interface EvidenceQuery {
@@ -203,7 +204,10 @@ export interface EvidenceQuery {
  * Wired into production evidence scoring in Phase 4; Phase 2 uses it offline and
  * for trace annotation only.
  */
-export function buildEvidenceQuery(analysis: AnalysisArtifact): EvidenceQuery {
+export function buildEvidenceQuery(
+  analysis: AnalysisArtifact,
+  clarification?: HumanClarification
+): EvidenceQuery {
   const parts: string[] = [];
 
   const coreThesis = analysis.coreThesis?.trim();
@@ -225,6 +229,10 @@ export function buildEvidenceQuery(analysis: AnalysisArtifact): EvidenceQuery {
     .filter(Boolean);
   parts.push(...tradeoffs);
 
+  const clarificationAnswer =
+    clarification?.status === "answered" ? clarification.answer?.trim() : "";
+  if (clarificationAnswer) parts.push(clarificationAnswer);
+
   const evidenceQuery = parts.join("\n");
 
   return {
@@ -235,6 +243,7 @@ export function buildEvidenceQuery(analysis: AnalysisArtifact): EvidenceQuery {
       hasAcknowledgedPoint: Boolean(acknowledgedPoint),
       answerableQuestionCount: questions.length,
       unspokenTradeoffCount: tradeoffs.length,
+      hasClarificationAnswer: Boolean(clarificationAnswer),
     },
     constructedLength: evidenceQuery.length,
   };

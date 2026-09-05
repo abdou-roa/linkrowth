@@ -8,7 +8,7 @@
  */
 
 /** Bump only when the RetrievalTrace shape (not scoring internals) changes. */
-export const RETRIEVAL_TRACE_SCHEMA_VERSION = 3;
+export const RETRIEVAL_TRACE_SCHEMA_VERSION = 4;
 
 /** Terminal state of a single retrieval attempt. */
 export type RetrievalOutcome =
@@ -16,13 +16,18 @@ export type RetrievalOutcome =
   | "empty_query"
   | "no_index"
   | "embed_failed"
-  | "no_survivors";
+  | "no_survivors"
+  | "abstained";
 
 /** Why a ranked candidate did not become a proof point. */
 export type RetrievalDropReason =
   | "shareability"
   | "confidence"
   | "min_score"
+  | "generation_relevance"
+  | "evidence_score"
+  | "missing_index_item"
+  | "duplicate_claim"
   | "empty_claim"
   | "over_k";
 
@@ -93,7 +98,14 @@ export interface RetrievalTrace {
   /** Every ranked candidate considered, selected or not. */
   candidates: RetrievalTraceHit[];
   injectedProofPoints: string[];
-  timings?: { embedMs?: number; evidenceEmbedMs?: number; lexicalMs?: number; totalMs?: number };
+  timings?: {
+    embedMs?: number;
+    evidenceEmbedMs?: number;
+    lexicalMs?: number;
+    candidateGenerationMs?: number;
+    rerankMs?: number;
+    totalMs?: number;
+  };
 }
 
 /** Run/job/agent linkage supplied by persistence, not by retrieval. */

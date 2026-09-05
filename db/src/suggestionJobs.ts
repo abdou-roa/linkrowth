@@ -196,6 +196,7 @@ export async function pauseSuggestionJobForClarification(
       JSON.stringify({
         analysis: checkpoint.analysis,
         steps: checkpoint.steps,
+        retrievalShortlist: checkpoint.retrievalShortlist,
       }),
     ]
   );
