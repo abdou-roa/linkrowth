@@ -580,6 +580,17 @@ describe("retrieveContext hybrid strategy", () => {
     const trace = last();
     assert.equal(trace.outcome, "no_survivors");
     assert.ok(trace.candidates.every((candidate) => !candidate.selected));
-    assert.ok(trace.candidates.every((candidate) => candidate.dropReason === "min_score"));
+    assert.equal(
+      trace.candidates.find((candidate) => candidate.artifactId === "postgres")?.dropReason,
+      "min_score"
+    );
+    assert.equal(
+      trace.candidates.find((candidate) => candidate.artifactId === "extension")?.dropReason,
+      "min_score"
+    );
+    assert.equal(
+      trace.candidates.find((candidate) => candidate.artifactId === "private")?.dropReason,
+      "shareability"
+    );
   });
 });
