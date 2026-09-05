@@ -319,14 +319,77 @@ describe("experience index store (v3)", () => {
       writeFixtureIndexV2(dbPath, makeV2Index(near, far));
 
       const loaded = loadIndex(dbPath)!;
-      const hits = rankBySituation(loaded, [1, 0, 0], 2);
+      const hits = rankBySituation(loaded, [1, 0, 0], 2).eligible;
       assert.equal(hits[0]?.artifact.id, "near", "situation cosine should rank 'near' first");
 
-      const combined = rankIndex(loaded, [1, 0, 0], 2);
+      const combined = rankIndex(loaded, [1, 0, 0], 2).eligible;
       assert.equal(combined[0]?.artifact.id, "far", "combined vector ranks 'far' first");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("rankIndex and rankBySituation exclude non-injectable artifacts before the pool cap", () => {
+    const index: ExperienceIndex = {
+      indexedAt: "2026-08-27T00:00:00Z",
+      schemaVersion: EXPERIENCE_INDEX_SCHEMA_VERSION,
+      embedding: { provider: "test", model: "fake", dimensions: 3 },
+      count: 5,
+      items: [
+        {
+          id: "private-top",
+          vector: [1, 0, 0],
+          situationVector: [1, 0, 0],
+          evidenceVector: [1, 0, 0],
+          artifact: artifact("private-top", "secret", { shareability: "private" }),
+        },
+        {
+          id: "low-top",
+          vector: [0.99, 0.01, 0],
+          situationVector: [0.99, 0.01, 0],
+          evidenceVector: [0.99, 0.01, 0],
+          artifact: artifact("low-top", "low conf", { confidence: "low" }),
+        },
+        {
+          id: "private-extra",
+          vector: [0.98, 0.02, 0],
+          situationVector: [0.98, 0.02, 0],
+          evidenceVector: [0.98, 0.02, 0],
+          artifact: artifact("private-extra", "secret extra", {
+            shareability: "private",
+          }),
+        },
+        {
+          id: "empty-extra",
+          vector: [0.97, 0.03, 0],
+          situationVector: [0.97, 0.03, 0],
+          evidenceVector: [0.97, 0.03, 0],
+          artifact: artifact("empty-extra", "empty", { claimableLine: " " }),
+        },
+        {
+          id: "public-third",
+          vector: [0.9, 0.1, 0],
+          situationVector: [0.9, 0.1, 0],
+          evidenceVector: [0.9, 0.1, 0],
+          artifact: artifact("public-third", "public claim"),
+        },
+      ],
+    };
+
+    const combinedWindow = rankIndex(index, [1, 0, 0], 1);
+    const combined = combinedWindow.eligible;
+    assert.equal(combined.length, 1);
+    assert.equal(combined[0]?.artifact.id, "public-third");
+    assert.deepEqual(
+      combinedWindow.entries.map((entry) => entry.dropReason),
+      ["shareability", "confidence", "shareability", "empty_claim", undefined]
+    );
+
+    const situationWindow = rankBySituation(index, [1, 0, 0], 1);
+    const situation = situationWindow.eligible;
+    assert.equal(situation.length, 1);
+    assert.equal(situation[0]?.artifact.id, "public-third");
+    assert.equal(situationWindow.entries.length, 5);
   });
 
   it("evidenceScore returns cosine between item evidenceVector and query", () => {
@@ -416,7 +479,11 @@ describe("experience index store (v3)", () => {
 
       writeFixtureIndexV3(dbPath, index);
 
-      const hits = rankByLexical(dbPath, buildFts5Query("postgres durable jobs"), 5);
+      const hits = rankByLexical(
+        dbPath,
+        buildFts5Query("postgres durable jobs"),
+        5
+      ).eligible;
       assert.ok(hits.length >= 1);
       assert.equal(hits[0]?.artifact.id, "postgres");
       assert.ok(hits[0]!.bm25Score < 0, "bm25 scores are negative; lower = better");
@@ -425,8 +492,64 @@ describe("experience index store (v3)", () => {
         dbPath,
         buildFts5Query("How do durable Postgres jobs work?"),
         5
-      );
+      ).eligible;
       assert.equal(punctuationSafe[0]?.artifact.id, "postgres");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rankByLexical finds eligible hits behind more than three stronger exclusions", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-experience-index-fts-elig-"));
+    const dbPath = join(dir, "experience-index.db");
+
+    try {
+      const privateHits = Array.from({ length: 4 }, (_, index) =>
+        artifact(`private-jobs-${index}`, `Postgres durable private jobs ${index}`, {
+          domains: ["postgres", "durable", "jobs"],
+          stack: ["Postgres"],
+          problem: "Postgres durable jobs retries",
+          approach: "Durable Postgres jobs",
+          shareability: "private",
+        })
+      );
+      const publicHit = artifact("public-jobs", "Postgres public jobs", {
+        domains: [],
+        stack: [],
+        problem: "",
+        approach: "",
+      });
+
+      const index: ExperienceIndex = {
+        indexedAt: "2026-08-27T00:00:00Z",
+        schemaVersion: EXPERIENCE_INDEX_SCHEMA_VERSION,
+        embedding: { provider: "test", model: "fake", dimensions: 3 },
+        count: 5,
+        items: [
+          ...privateHits.map((privateHit) => ({
+            id: privateHit.id,
+            vector: [1, 0, 0],
+            situationVector: [1, 0, 0],
+            evidenceVector: [1, 0, 0],
+            artifact: privateHit,
+          })),
+          {
+            id: "public-jobs",
+            vector: [1, 0, 0],
+            situationVector: [1, 0, 0],
+            evidenceVector: [1, 0, 0],
+            artifact: publicHit,
+          },
+        ],
+      };
+
+      writeFixtureIndexV3(dbPath, index);
+
+      const window = rankByLexical(dbPath, buildFts5Query("postgres durable jobs"), 1);
+      assert.equal(window.eligible.length, 1);
+      assert.equal(window.eligible[0]?.artifact.id, "public-jobs");
+      assert.equal(window.entries.length, 5);
+      assert.ok(window.entries.slice(0, 4).every((entry) => entry.dropReason === "shareability"));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

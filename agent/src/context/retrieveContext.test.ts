@@ -211,6 +211,7 @@ describe("retrieveContext trace emission", () => {
       k: 3,
       minScore: 0.3,
       strategy: "single",
+      candidatePoolSize: 12,
       queryConstruction: {
         tier: "a",
         fallback: false,
@@ -235,8 +236,108 @@ describe("retrieveContext trace emission", () => {
     const priv = trace.candidates.find((c) => c.artifactId === "private");
     assert.equal(priv?.selected, false);
     assert.equal(priv?.dropReason, "shareability");
+    assert.equal(priv?.prefiltered, true);
     assert.equal(trace.query.text, "How do you run durable suggestion jobs without Kafka?");
     assert.equal(trace.query.headline, undefined);
+  });
+
+  it("avoids candidate starvation when non-injectable rows outrank a public hit", async () => {
+    function makeItem(
+      id: string,
+      v: number[],
+      artifact: ExperienceIndex["items"][number]["artifact"]
+    ): IndexedExperience {
+      return { id, vector: v, situationVector: v, evidenceVector: v, artifact };
+    }
+
+    const starvationIndex: ExperienceIndex = {
+      indexedAt: "2026-08-27T00:00:00Z",
+      schemaVersion: EXPERIENCE_INDEX_SCHEMA_VERSION,
+      embedding: { provider: "test", model: "fake", dimensions: 3 },
+      count: 3,
+      items: [
+        makeItem("private-top", [1, 0, 0], {
+          id: "private-top",
+          sourceCandidateId: "private-top",
+          source: "local_git",
+          repo: "client-x",
+          implementationDate: "2026-08-01T00:00:00Z",
+          title: "Private top hit",
+          domains: ["postgres"],
+          stack: ["Postgres"],
+          problem: "NDA",
+          approach: "hidden",
+          tradeoff: "",
+          claimableLine: "I cannot discuss this.",
+          confidence: "high",
+          shareability: "private",
+          paths: [],
+        }),
+        makeItem("low-second", [0.99, 0.01, 0], {
+          id: "low-second",
+          sourceCandidateId: "low-second",
+          source: "local_git",
+          repo: "linkrowth",
+          implementationDate: "2026-08-01T00:00:00Z",
+          title: "Low confidence near miss",
+          domains: ["postgres"],
+          stack: ["Postgres"],
+          problem: "Jobs",
+          approach: "Queue",
+          tradeoff: "",
+          claimableLine: "I almost claimed this.",
+          confidence: "low",
+          shareability: "public",
+          paths: [],
+        }),
+        makeItem("public-third", [0.9, 0.1, 0], {
+          id: "public-third",
+          sourceCandidateId: "public-third",
+          source: "local_git",
+          repo: "linkrowth",
+          implementationDate: "2026-08-01T00:00:00Z",
+          title: "Public durable jobs",
+          domains: ["postgres", "jobs"],
+          stack: ["Postgres"],
+          problem: "Need durable suggestion jobs",
+          approach: "Queued rows",
+          tradeoff: "",
+          claimableLine: "I built durable suggestion jobs.",
+          confidence: "high",
+          shareability: "public",
+          paths: [],
+        }),
+      ],
+    };
+
+    const { sink, last } = capturingSink();
+    const enriched = await retrieveContext(
+      { text: "How do you run durable suggestion jobs without Kafka?" },
+      baseContext,
+      {
+        loadIndex: () => starvationIndex,
+        embedQuery: async () => [1, 0, 0],
+        k: 1,
+        candidatePoolSize: 1,
+        minScore: 0.3,
+        strategy: "single",
+        traceSink: sink,
+      }
+    );
+
+    assert.ok(
+      enriched.proofPoints?.includes("I built durable suggestion jobs."),
+      "public third-ranked artifact must survive after prefilter"
+    );
+    const trace = last();
+    assert.equal(trace.params.candidatePoolSize, 1);
+    assert.deepEqual(
+      trace.candidates.map((c) => c.artifactId),
+      ["private-top", "low-second", "public-third"]
+    );
+    assert.equal(trace.candidates[0]?.dropReason, "shareability");
+    assert.equal(trace.candidates[1]?.dropReason, "confidence");
+    assert.ok(trace.candidates[2]?.selected);
   });
 
   it("emits no_survivors when everything is filtered out", async () => {
@@ -382,6 +483,7 @@ describe("retrieveContext split strategy", () => {
     const trace = last();
     assert.equal(trace.outcome, "injected");
     assert.equal(trace.params.strategy, "split");
+    assert.equal(trace.params.candidatePoolSize, 12);
 
     const postgres = trace.candidates.find((c) => c.artifactId === "postgres");
     assert.ok(postgres?.selected);
@@ -485,12 +587,23 @@ describe("retrieveContext hybrid strategy", () => {
       {
         loadIndex: () => fixtureIndex(),
         embedQuery: async () => [1, 0, 0],
-        lexicalSearch: () => [
-          {
+        lexicalSearch: () => {
+          const candidate = {
             bm25Score: -5.0,
             artifact: fixtureIndex().items[0]!.artifact,
-          },
-        ],
+          };
+          const rejected = {
+            bm25Score: -4.0,
+            artifact: fixtureIndex().items[1]!.artifact,
+          };
+          return {
+            eligible: [candidate],
+            entries: [
+              { candidate, rank: 0 },
+              { candidate: rejected, rank: 1, dropReason: "shareability" as const },
+            ],
+          };
+        },
         k: 3,
         minScore: 0.3,
         strategy: "hybrid",
@@ -510,12 +623,16 @@ describe("retrieveContext hybrid strategy", () => {
     assert.equal(trace.params.strategy, "hybrid");
     assert.equal(trace.params.minScore, 0.3);
     assert.equal(trace.params.rrfC, 60);
+    assert.equal(trace.params.candidatePoolSize, 12);
+    assert.equal(trace.params.semanticPoolSize, 12);
+    assert.equal(trace.params.lexicalPoolSize, 12);
     assert.equal(trace.params.hybridAdmission, "semantic_floor_or_lexical_match");
     assert.deepEqual(trace.params.lexicalChannel, {
       status: "ok",
       query:
         '"run" OR "durable" OR "Postgres" OR "suggestion" OR "jobs" OR "Kafka"',
       hitCount: 1,
+      examinedCount: 2,
     });
 
     const postgres = trace.candidates.find((c) => c.artifactId === "postgres");
@@ -525,6 +642,15 @@ describe("retrieveContext hybrid strategy", () => {
     assert.equal(postgres?.semanticRank, 1);
     assert.equal(postgres?.lexicalRank, 1);
     assert.equal(postgres?.bm25Score, -5.0);
+
+    const privateCandidates = trace.candidates.filter(
+      (candidate) => candidate.artifactId === "private"
+    );
+    assert.equal(privateCandidates.length, 1, "hybrid prefilter witnesses must be deduplicated");
+    assert.equal(privateCandidates[0]?.dropReason, "shareability");
+    assert.equal(privateCandidates[0]?.prefiltered, true);
+    assert.equal(privateCandidates[0]?.semanticRank, 2);
+    assert.equal(privateCandidates[0]?.lexicalRank, 2);
   });
 
   it("falls back to situation-only when lexical search throws", async () => {
@@ -568,7 +694,7 @@ describe("retrieveContext hybrid strategy", () => {
       {
         loadIndex: () => fixtureIndex(),
         embedQuery: async () => [-1, 0, 0],
-        lexicalSearch: () => [],
+        lexicalSearch: () => ({ eligible: [], entries: [] }),
         k: 3,
         minScore: 0.3,
         strategy: "hybrid",

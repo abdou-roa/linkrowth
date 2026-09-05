@@ -11,6 +11,7 @@
 --   candidates[].lexicalRank        number | undefined
 --   candidates[].bm25Score          number | undefined
 --   candidates[].rrfScore           number | undefined
+--   candidates[].prefiltered        boolean | undefined
 --   params.rrfC                     number (hybrid strategy)
 --   params.lexicalPoolSize          number (hybrid strategy)
 --   params.semanticPoolSize         number (hybrid strategy)

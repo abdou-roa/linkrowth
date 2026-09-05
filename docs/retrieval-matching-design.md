@@ -558,13 +558,18 @@ Before rollout, the proposed pipeline should:
 
 This phase is required before tuning thresholds or weights.
 
-### Phase 1: fix candidate eligibility
+### Phase 1: fix candidate eligibility *(landed)*
 
-- prefilter non-injectable artifacts before candidate limits;
-- retain the existing final filters as defense in depth;
-- replace unexplained `k × 3` over-fetching with an evaluated candidate count.
+- prefilter non-injectable artifacts before candidate limits; ✅
+- retain the existing final filters as defense in depth; ✅
+- replace unexplained `k × 3` over-fetching with a shared configurable
+  candidate pool (`LINKROWTH_RETRIEVAL_CANDIDATE_POOL`, default `k × 4`). ✅
 
-This is independently useful and does not require a new similarity technique.
+Semantic ranking (`rankIndex` / `rankBySituation`) scores only injectable
+artifacts. Lexical ranking over-fetches FTS hits, drops non-injectable rows,
+then truncates to the requested pool. `evaluateHits` remains defense in depth.
+Pool-size tuning against a labeled set is still deferred to the retrieval eval
+harness.
 
 ### Phase 2: split semantic fields *(in progress)*
 

@@ -22,8 +22,9 @@ ONLINE (agent/)
         ↓ buildRetrievalQuery() → { situationQuery, headline }
         ↓ embedQuery(situationQuery) — RETRIEVAL_QUERY (Gemini) or same embed API (OpenAI)
         ↓ query vector
-        ↓ rankIndex() [single], rankBySituation() [split],
-          or situation cosine + BM25 → RRF [hybrid]
+        ↓ eligibility-aware channel windows; exclusions retained for tracing
+        ↓ rankIndex() [single], rankBySituation() [split], or
+          situation cosine + BM25 → RRF [hybrid]
         ↓ strategy-aware relevance admission + evaluateHits() safety filters
         ↓ claimableLines → UserContext.proofPoints
         ↓ engage(post, enrichedContext)
@@ -322,33 +323,42 @@ If `queryVector.length !== item.vector.length`, `cosineSimilarity` returns **0**
 ```text
 1. Map every index item → { score: cosineSimilarity(query, item.vector), artifact }
 2. Sort descending by score
-3. slice(0, k)
+3. Scan the ranking until k injectable artifacts are collected or it is exhausted
+4. Return eligible candidates plus every examined exclusion and original rank
 ```
 
 **No approximate nearest neighbor.** Every row is scored. Acceptable while artifact counts are small (hundreds/low thousands).
 
-At agent runtime, `retrieveContext` requests **`k × 3`** hits before filtering so enough survive the post-rank filters:
+At agent runtime, `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` defaults to `k × 4`
+for all semantic strategies. The cap counts injectable artifacts rather than
+raw rows, so stronger private, low-confidence, or empty-claim entries cannot
+starve the pool.
 
 ```ts
-const rawHits = rankIndex(index, queryVector, Math.max(k * 3, k));
+const window = rankIndex(index, queryVector, candidatePoolSize);
+// window.eligible: inputs to selection
+// window.entries: eligible + rejected rows encountered for tracing
 ```
 
 Default `k = 5` (`LINKROWTH_RETRIEVAL_K`).
 
 ---
 
-## Post-rank filters
+## Eligibility and final filters
 
-After cosine ranking, `selectClaimableHits()` in `agent/src/context/experience/select.ts` applies four filters **in order**:
+Hard eligibility runs while each channel window is filled. The same checks run
+again before injection as defense in depth:
 
 | # | Filter | Drops | Configurable? |
 |---|---|---|---|
 | 1 | Shareability | `private` | No — hardcoded |
 | 2 | Confidence | `low` | No — hardcoded |
-| 3 | Score floor | `score < minScore` | Yes — default **0.3** |
-| 4 | Claimable line | empty / whitespace | No — hardcoded |
+| 3 | Claimable line | empty / whitespace | No — hardcoded |
+| 4 | Relevance | single/split below cosine floor; hybrid below floor without a lexical rank | Yes — default **0.3** |
 
-Then `slice(0, k)` takes the top survivors.
+The first `k` final survivors are selected. Exclusions encountered while
+filling channel pools are serialized with `prefiltered=true`, their original
+score/rank, and a drop reason.
 
 Env: `LINKROWTH_RETRIEVAL_MIN_SCORE=0.3`
 

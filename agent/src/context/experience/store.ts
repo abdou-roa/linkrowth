@@ -7,6 +7,7 @@ import type {
   RankedArtifact,
 } from "./types";
 import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "./types";
+import { buildCandidateWindow, type CandidateWindow } from "./select";
 import { buildFts5Query, DEFAULT_BM25_WEIGHTS, type Bm25Weights } from "./fts";
 import { cosineSimilarity } from "./vector";
 
@@ -162,16 +163,16 @@ export function rankIndex(
   index: ExperienceIndex,
   queryVector: number[],
   k = 5
-): RankedArtifact[] {
-  if (k <= 0 || index.items.length === 0) return [];
+): CandidateWindow<RankedArtifact> {
+  if (k <= 0 || index.items.length === 0) return { eligible: [], entries: [] };
 
-  return index.items
+  const ranked = index.items
     .map((item) => ({
       score: cosineSimilarity(queryVector, item.vector),
       artifact: item.artifact,
     }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, k);
+    .sort((a, b) => b.score - a.score);
+  return buildCandidateWindow(ranked, k);
 }
 
 /** Rank by situation cosine only — high-recall candidate generation for the split strategy. */
@@ -179,16 +180,16 @@ export function rankBySituation(
   index: ExperienceIndex,
   queryVector: number[],
   k = 5
-): RankedArtifact[] {
-  if (k <= 0 || index.items.length === 0) return [];
+): CandidateWindow<RankedArtifact> {
+  if (k <= 0 || index.items.length === 0) return { eligible: [], entries: [] };
 
-  return index.items
+  const ranked = index.items
     .map((item) => ({
       score: cosineSimilarity(queryVector, item.situationVector),
       artifact: item.artifact,
     }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, k);
+    .sort((a, b) => b.score - a.score);
+  return buildCandidateWindow(ranked, k);
 }
 
 /**
@@ -203,15 +204,19 @@ export function evidenceScore(item: IndexedExperience, evidenceQueryVector: numb
 /**
  * BM25 lexical search over the FTS5 index.
  * bm25() returns negative values; lower (more negative) = better match.
+ *
+ * The current index is intentionally small, so all ordered matches are scanned
+ * until the eligibility-aware pool is full. No arbitrary over-fetch multiplier
+ * can starve an eligible result behind ineligible rows.
  */
 export function rankByLexical(
   dbPath: string,
   fts5Query: string,
   k = 5,
   weights: Bm25Weights = DEFAULT_BM25_WEIGHTS
-): LexicalRankedArtifact[] {
+): CandidateWindow<LexicalRankedArtifact> {
   const query = fts5Query.trim();
-  if (!query || k <= 0) return [];
+  if (!query || k <= 0) return { eligible: [], entries: [] };
 
   let db: Database.Database;
   try {
@@ -232,12 +237,10 @@ export function rankByLexical(
          FROM experiences_fts f
          JOIN experiences e ON e.id = f.id
          WHERE experiences_fts MATCH @query
-         ORDER BY score
-         LIMIT @k`
+         ORDER BY score`
       )
       .all({
         query,
-        k,
         wTitle: weights.title,
         wDomains: weights.domains,
         wStack: weights.stack,
@@ -246,10 +249,11 @@ export function rankByLexical(
         wPaths: weights.paths,
       }) as Array<{ id: string; score: number; artifact_json: string }>;
 
-    return rows.map((row) => ({
+    const ranked = rows.map((row) => ({
       bm25Score: row.score,
       artifact: JSON.parse(row.artifact_json) as ExperienceArtifact,
     }));
+    return buildCandidateWindow(ranked, k);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const reason: LexicalSearchFailureReason = message.includes("no such table")

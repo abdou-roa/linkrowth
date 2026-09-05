@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExperienceArtifact, RankedArtifact } from "./types";
 import {
+  buildCandidateWindow,
   evaluateHits,
   evaluateHybridHits,
+  filterInjectableItems,
+  isInjectableArtifact,
   mergeProofPoints,
   selectClaimableHits,
 } from "./select";
@@ -38,6 +41,92 @@ const hit = (
 ): RankedArtifact => ({
   score,
   artifact: artifact(line, line, extra),
+});
+
+describe("isInjectableArtifact", () => {
+  it("accepts public/anonymized high/medium with a claimable line", () => {
+    assert.equal(isInjectableArtifact(artifact("a", "ok")), true);
+    assert.equal(
+      isInjectableArtifact(
+        artifact("b", "ok", { shareability: "anonymized", confidence: "medium" })
+      ),
+      true
+    );
+  });
+
+  it("rejects private, low confidence, and empty claimable lines", () => {
+    assert.equal(
+      isInjectableArtifact(artifact("p", "secret", { shareability: "private" })),
+      false
+    );
+    assert.equal(
+      isInjectableArtifact(artifact("l", "weak", { confidence: "low" })),
+      false
+    );
+    assert.equal(
+      isInjectableArtifact(artifact("e", "   ", { claimableLine: "   " })),
+      false
+    );
+  });
+
+  it("filterInjectableItems keeps only injectable indexed rows", () => {
+    const items = [
+      {
+        id: "ok",
+        vector: [1],
+        situationVector: [1],
+        evidenceVector: [1],
+        artifact: artifact("ok", "public claim"),
+      },
+      {
+        id: "bad",
+        vector: [1],
+        situationVector: [1],
+        evidenceVector: [1],
+        artifact: artifact("bad", "secret", { shareability: "private" }),
+      },
+    ];
+    assert.deepEqual(
+      filterInjectableItems(items).map((i) => i.id),
+      ["ok"]
+    );
+  });
+});
+
+describe("buildCandidateWindow", () => {
+  it("counts only eligible candidates toward the pool cap and retains exclusions", () => {
+    const window = buildCandidateWindow(
+      [
+        hit(0.99, "private", { shareability: "private" }),
+        hit(0.98, "low", { confidence: "low" }),
+        hit(0.97, "empty", { claimableLine: " " }),
+        hit(0.9, "public"),
+      ],
+      1
+    );
+
+    assert.deepEqual(window.eligible.map((candidate) => candidate.artifact.id), ["public"]);
+    assert.deepEqual(
+      window.entries.map((entry) => ({
+        id: entry.candidate.artifact.id,
+        rank: entry.rank,
+        dropReason: entry.dropReason,
+      })),
+      [
+        { id: "private", rank: 0, dropReason: "shareability" },
+        { id: "low", rank: 1, dropReason: "confidence" },
+        { id: "empty", rank: 2, dropReason: "empty_claim" },
+        { id: "public", rank: 3, dropReason: undefined },
+      ]
+    );
+  });
+
+  it("returns an empty window when the pool size is zero", () => {
+    assert.deepEqual(buildCandidateWindow([hit(1, "public")], 0), {
+      eligible: [],
+      entries: [],
+    });
+  });
 });
 
 describe("selectClaimableHits", () => {

@@ -43,17 +43,17 @@ embedded.
 | `LINKROWTH_RETRIEVAL_STRATEGY` | `single` | `single` → combined `vector`<br>`split`, `2` → `situation_vector`<br>`hybrid`, `3` → situation cosine + BM25 + RRF | Candidate-generation strategy. |
 | `LINKROWTH_RETRIEVAL_K` | `5` | positive integer | Max proof points injected **after** post-rank filters. |
 | `LINKROWTH_RETRIEVAL_MIN_SCORE` | `0.3` | float | Cosine floor for single/split and the semantic admission floor for hybrid. Hybrid candidates also pass admission when BM25 recovered them. |
-| `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` | `k × 4` | positive integer | Situation-channel recall pool for split and hybrid. |
-| `LINKROWTH_RETRIEVAL_LEXICAL_POOL` | `k × 4` | positive integer | BM25 pool for hybrid. |
+| `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` | `k × 4` | positive integer | Eligible-artifact pool for single/split and hybrid's semantic channel. |
+| `LINKROWTH_RETRIEVAL_LEXICAL_POOL` | `k × 4` | positive integer | Eligible-artifact BM25 pool for hybrid. |
 | `LINKROWTH_RETRIEVAL_RRF_C` | `60` | positive integer | RRF rank constant for hybrid ordering. |
 
-**Pool sizes not exposed as env vars:**
+**Effective pool sizes:**
 
-| Strategy | Pre-filter pool size | Source |
+| Strategy | Pool | Source |
 | --- | --- | --- |
-| `single` | `max(k × 3, k)` | hardcoded in `retrieveContext.ts` |
-| `split` | `max(candidatePoolSize, k)` | `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` or `k × 4` |
-| `hybrid` semantic | `max(candidatePoolSize, k)` | `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` or `k × 4` |
+| `single` | `max(candidatePoolSize, k)` | `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` or `k × 4` |
+| `split` | `max(candidatePoolSize, k)` | same |
+| `hybrid` semantic | `max(candidatePoolSize, k)` | same |
 | `hybrid` lexical | `lexicalPoolSize` | `LINKROWTH_RETRIEVAL_LEXICAL_POOL` or `k × 4` |
 
 ### Index and embedding
@@ -92,13 +92,14 @@ wired through `runEngageWithStatus` today.
 | `strategy` | `"single"` \| `"split"` \| `"hybrid"` | `LINKROWTH_RETRIEVAL_STRATEGY` | Retrieval strategy. |
 | `k` | `number` | `LINKROWTH_RETRIEVAL_K` | Max hits after filtering. |
 | `minScore` | `number` | `LINKROWTH_RETRIEVAL_MIN_SCORE` | Cosine score floor. |
-| `candidatePoolSize` | `number` | `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` | Split-strategy recall pool. |
+| `candidatePoolSize` | `number` | `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` | Recall pool for all strategies (Phase 1). |
 | `lexicalPoolSize` | `number` | `LINKROWTH_RETRIEVAL_LEXICAL_POOL` | Hybrid BM25 pool. |
 | `rrfC` | `number` | `LINKROWTH_RETRIEVAL_RRF_C` | Hybrid RRF constant. |
 | `indexPath` | `string` | `LINKROWTH_EXPERIENCE_INDEX_DB` | Override index file path. |
 | `analysis` | `AnalysisArtifact` | — | **Split only.** Enables evidence-cosine trace annotation via `buildEvidenceQuery()`. Does not affect selection in Phase 2. |
 | `embedQuery` | function | — | Test double for embedding. |
 | `loadIndex` | function | — | Test double for index load. |
+| `lexicalSearch` | function | — | Test double for BM25 search. |
 | `traceSink` | `RetrievalTraceSink` | — | Custom trace sink (e.g. in-memory capture). |
 
 **Skipping retrieval entirely:** pass `context` to `runEngageWithStatus()` —
@@ -108,15 +109,25 @@ retrieval is bypassed and the supplied context is used as-is.
 
 ## Hardcoded filters
 
-These are not configurable via env. Applied in order by `evaluateHits()` in
-`agent/src/context/experience/select.ts` after cosine ranking:
+Eligibility (shareability, confidence, non-empty `claimableLine`) is applied
+**before** candidate pool caps via `buildCandidateWindow()` in
+`agent/src/context/experience/select.ts` (Phase 1). Semantic and lexical
+rankers scan ordered results until the configured number of injectable
+artifacts is found or the ranking is exhausted. Rejected rows keep their
+original channel ranks, scores, and eligibility reasons in the trace.
+
+Lexical ranking consumes all ordered FTS matches under the current small-index
+assumption; it does not use an over-fetch multiplier.
+
+The same eligibility checks run again in `evaluateHits()` as defense in depth,
+together with score floor and top-k:
 
 | # | Filter | Kept | Dropped (`dropReason`) |
 | --- | --- | --- | --- |
 | 1 | Shareability | `public`, `anonymized` | `private` → `shareability` |
 | 2 | Confidence | `high`, `medium` | `low` → `confidence` |
-| 3 | Score floor | `score >= minScore` | below floor → `min_score` |
-| 4 | Claimable line | non-empty trimmed text | empty → `empty_claim` |
+| 3 | Claimable line | non-empty trimmed text | empty → `empty_claim` |
+| 4 | Relevance | single/split cosine clears `minScore`; hybrid clears it semantically or has a lexical rank | otherwise `min_score` |
 | 5 | Top-k cap | first `k` survivors | rest → `over_k` |
 
 ---

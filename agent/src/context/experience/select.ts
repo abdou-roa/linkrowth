@@ -1,4 +1,5 @@
-import type { FusedCandidate, RankedArtifact } from "./types";
+import type { ExperienceArtifact, IndexedExperience, RankedArtifact } from "./types";
+import type { FusedCandidate } from "./types";
 
 const ALLOWED_SHAREABILITY = new Set(["public", "anonymized"]);
 const ALLOWED_CONFIDENCE = new Set(["high", "medium"]);
@@ -17,6 +18,52 @@ export interface HitDecision {
   rank: number;
   selected: boolean;
   dropReason?: HitDropReason;
+}
+
+export type EligibilityDropReason = "shareability" | "confidence" | "empty_claim";
+
+export interface CandidateWindowEntry<T extends { artifact: ExperienceArtifact }> {
+  candidate: T;
+  /** Position in the uncapped channel ranking (0-based). */
+  rank: number;
+  dropReason?: EligibilityDropReason;
+}
+
+export interface CandidateWindow<T extends { artifact: ExperienceArtifact }> {
+  /** Injectable candidates; the pool cap counts only this list. */
+  eligible: T[];
+  /** Every candidate examined while filling the eligible pool. */
+  entries: Array<CandidateWindowEntry<T>>;
+}
+
+export function eligibilityDropReason(
+  artifact: ExperienceArtifact
+): EligibilityDropReason | undefined {
+  if (!ALLOWED_SHAREABILITY.has(artifact.shareability)) return "shareability";
+  if (!ALLOWED_CONFIDENCE.has(artifact.confidence)) return "confidence";
+  if (!artifact.claimableLine?.trim()) return "empty_claim";
+  return undefined;
+}
+
+/**
+ * Fill a candidate pool without letting ineligible rows consume its cap while
+ * retaining every examined exclusion for trace observability.
+ */
+export function buildCandidateWindow<T extends { artifact: ExperienceArtifact }>(
+  rankedCandidates: T[],
+  poolSize: number
+): CandidateWindow<T> {
+  if (poolSize <= 0) return { eligible: [], entries: [] };
+
+  const eligible: T[] = [];
+  const entries: Array<CandidateWindowEntry<T>> = [];
+  for (const [rank, candidate] of rankedCandidates.entries()) {
+    const dropReason = eligibilityDropReason(candidate.artifact);
+    entries.push({ candidate, rank, dropReason });
+    if (!dropReason) eligible.push(candidate);
+    if (eligible.length >= poolSize) break;
+  }
+  return { eligible, entries };
 }
 
 function evaluateRankedHits(
@@ -46,6 +93,19 @@ function evaluateRankedHits(
 }
 
 /**
+ * Hard eligibility for injection as a proof point (Phase 1 prefilter).
+ * Score floors and top-k caps are applied later by evaluateHits.
+ */
+export function isInjectableArtifact(artifact: ExperienceArtifact): boolean {
+  return eligibilityDropReason(artifact) === undefined;
+}
+
+/** Keep only indexed rows that could become proof points. */
+export function filterInjectableItems(items: IndexedExperience[]): IndexedExperience[] {
+  return items.filter((item) => isInjectableArtifact(item.artifact));
+}
+
+/**
  * Single source of truth for retrieval selection. Annotates every hit with a
  * keep/drop decision so both selection and observability read from one place.
  * Filters, in order:
@@ -54,6 +114,9 @@ function evaluateRankedHits(
  * - Drop below the cosine score floor (irrelevant hits are actively harmful).
  * - Drop empty claimable lines.
  * - Keep only the first k survivors (rest marked "over_k").
+ *
+ * Phase 1 prefilters the same eligibility rules before candidate pool caps;
+ * these checks remain as defense in depth.
  */
 export function evaluateHits(
   hits: RankedArtifact[],

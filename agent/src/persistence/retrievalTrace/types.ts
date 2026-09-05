@@ -44,6 +44,8 @@ export interface RetrievalTraceHit {
   /** True when the hit survived every filter and became a proof point. */
   selected: boolean;
   dropReason?: RetrievalDropReason;
+  /** True when hard eligibility excluded the artifact before a channel pool cap. */
+  prefiltered?: boolean;
   claimableLine?: string;
   /**
    * Situation cosine when strategy=split (same as score in that mode; explicit
