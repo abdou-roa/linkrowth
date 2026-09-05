@@ -155,7 +155,8 @@ Using `embed()` at query time with Gemini will produce systematically worse scor
 3. For each batch: interleaved texts `[combined₀, situation₀, evidence₀, combined₁, …]` → `vectors = await embed(texts)`
 4. Round each vector to **6 decimal places** (`roundVector` in `distill/src/util/text.ts`)
 5. Build in-memory `ExperienceIndex`
-6. Persist to SQLite via `saveIndex()` (drops and recreates tables)
+6. Persist to a fresh sibling SQLite file via `saveIndex()`, then atomically
+   replace the live index only after schema, metadata, and every row commit
 
 ### SQLite schema (v2)
 
@@ -232,6 +233,10 @@ The constructed query is passed to `embedQuery()`. Headline is recorded on the
 retrieval trace (`query.headline`) for a later lexical/BM25 or tie-break
 channel and is never mixed into the situation vector.
 
+Postgres trace persistence keeps this provenance in separate
+`query_text`, `query_headline`, and `query_evidence_text` columns. The latter
+two are nullable so existing v1 trace rows remain readable.
+
 Traces also record `params.queryConstruction`: `{ tier, fallback, rawLength,
 constructedLength }`.
 
@@ -258,7 +263,8 @@ selection in Phase 2. Production selection is identical to `single` in Phase 2.
 
 Only schema v2 indexes are accepted. Run `npm run index` (distill/) after
 upgrading; older index files are rejected and retrieval falls back to static
-context with a log warning.
+context with an explicit rebuild warning. Missing, incompatible, corrupt, and
+empty index states are reported separately.
 
 ### Formula
 
@@ -376,7 +382,8 @@ npm run search -- "postgres background jobs reliability"
 1. Load `experience-index.db`
 2. Warn on provider mismatch
 3. `embedQuery(query)`
-4. `rankIndex(index, vector, SEARCH_K)` — default `SEARCH_K=5`
+4. Rank the selected `--channel single|situation|evidence` vector column;
+   default `SEARCH_K=5`
 5. Print title, score, repo, shareability, confidence, claimableLine, domains
 
 **Difference from agent:** CLI does **not** run `selectClaimableHits` (no shareability/confidence/minScore filters). Use it to inspect raw cosine scores.

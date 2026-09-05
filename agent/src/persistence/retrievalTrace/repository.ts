@@ -19,12 +19,12 @@ export class PostgresRetrievalTraceRepository implements RetrievalTraceRepositor
     await this.pool.query(
       `INSERT INTO retrieval_traces (
          run_id, job_id, post_id, agent_id,
-         schema_version, outcome, query_text,
+         schema_version, outcome, query_text, query_headline, query_evidence_text,
          index_meta, params, candidates, injected_proof_points, timings
        ) VALUES (
          $1, $2, $3, $4,
-         $5, $6, $7,
-         $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb
+         $5, $6, $7, $8, $9,
+         $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb
        )`,
       [
         refs.runId ?? null,
@@ -34,6 +34,8 @@ export class PostgresRetrievalTraceRepository implements RetrievalTraceRepositor
         trace.schemaVersion,
         trace.outcome,
         trace.query.text,
+        trace.query.headline ?? null,
+        trace.query.evidenceText ?? null,
         trace.index ? JSON.stringify(trace.index) : null,
         JSON.stringify(trace.params ?? {}),
         JSON.stringify(trace.candidates ?? []),

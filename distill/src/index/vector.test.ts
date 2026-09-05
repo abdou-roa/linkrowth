@@ -5,7 +5,16 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { ExperienceArtifact } from "../types";
 import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "../types";
-import { buildIndex, loadIndex, rankByLexical, rankBySituation, rankIndex, saveIndex } from "./store";
+import {
+  buildIndex,
+  inspectIndex,
+  loadIndex,
+  rankByEvidence,
+  rankByLexical,
+  rankBySituation,
+  rankIndex,
+  saveIndex,
+} from "./store";
 import { cosineSimilarity, evidenceText, lexicalFields, retrievalText, situationText } from "./vector";
 
 const artifact = (id: string, line: string, extra: Partial<ExperienceArtifact> = {}): ExperienceArtifact => ({
@@ -178,6 +187,24 @@ describe("vector helpers", () => {
     assert.match(fields.paths, /0001\.sql/);
   });
 
+  it("rankByEvidence ranks by evidenceVector, not combined vector", async () => {
+    const index = await buildIndex(
+      [artifact("near_evidence", "near"), artifact("far_evidence", "far")],
+      async (texts) =>
+        texts.map((t, i) => {
+          if (i % 3 === 0) return t.includes("near") ? [0, 1] : [1, 0];
+          if (i % 3 === 1) return [0, 0];
+          return t.includes("near") ? [1, 0] : [0, 1];
+        }),
+      { provider: "test", model: "fake", dimensions: 2 }
+    );
+
+    const hits = rankByEvidence(index, [1, 0], 2);
+    assert.equal(hits[0]?.artifact.id, "near_evidence");
+    assert.ok((hits[0]?.score ?? 0) > 0.9);
+    assert.equal(rankIndex(index, [1, 0], 1)[0]?.artifact.id, "far_evidence");
+  });
+
   it("returns 0 cosine for mismatched dimensions", () => {
     assert.equal(cosineSimilarity([1, 0], [1, 0, 0]), 0);
     assert.equal(cosineSimilarity([], [1]), 0);
@@ -217,6 +244,7 @@ describe("vector helpers", () => {
       saveIndex(dbPath, index);
       const loaded = loadIndex(dbPath);
       assert.ok(loaded);
+      assert.deepEqual(inspectIndex(dbPath), { status: "current", count: 2 });
       assert.equal(loaded.count, 2);
       assert.equal(loaded.schemaVersion, EXPERIENCE_INDEX_SCHEMA_VERSION);
       assert.equal(loaded.items.length, 2);
@@ -246,5 +274,33 @@ describe("vector helpers", () => {
 
   it("returns null when the sqlite index file is missing", () => {
     assert.equal(loadIndex(join(tmpdir(), "does-not-exist-experience-index.db")), null);
+  });
+
+  it("preserves the previous index when a rebuild fails", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "distill-index-atomic-"));
+    const dbPath = join(dir, "experience-index.db");
+
+    try {
+      const valid = await buildIndex(
+        [artifact("existing", "existing claim")],
+        async (texts) => texts.map(() => [1, 0]),
+        { provider: "test", model: "fake", dimensions: 2 }
+      );
+      saveIndex(dbPath, valid);
+
+      const duplicate = {
+        ...valid,
+        count: 2,
+        items: [valid.items[0]!, { ...valid.items[0]! }],
+      };
+      assert.throws(() => saveIndex(dbPath, duplicate), /UNIQUE constraint failed/);
+
+      const loaded = loadIndex(dbPath);
+      assert.ok(loaded);
+      assert.equal(loaded.count, 1);
+      assert.deepEqual(loaded.items.map((item) => item.id), ["existing"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -1,4 +1,6 @@
 import Database from "better-sqlite3";
+import { randomUUID } from "node:crypto";
+import { renameSync, rmSync } from "node:fs";
 import type { EmbeddingMeta, ExperienceArtifact, ExperienceIndex, IndexedExperience } from "../types";
 import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "../types";
 import { ensureParentDir } from "../paths";
@@ -33,15 +35,8 @@ export interface LexicalRankedArtifact {
 
 const EMBED_BATCH = 32;
 
-/**
- * v3 schema: drops and recreates tables on every full rebuild so the column
- * layout is always authoritative. saveIndex is an offline tool, so this is safe.
- */
+/** Authoritative v3 schema written to a fresh database on every full rebuild. */
 const SCHEMA = `
-DROP TABLE IF EXISTS experiences_fts;
-DROP TABLE IF EXISTS experiences;
-DROP TABLE IF EXISTS index_meta;
-
 CREATE TABLE index_meta (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   indexed_at TEXT NOT NULL,
@@ -76,6 +71,12 @@ export interface RankedArtifact {
   score: number;
   artifact: ExperienceArtifact;
 }
+
+export type ExperienceIndexInspection =
+  | { status: "missing" }
+  | { status: "incompatible"; schemaVersion: number | null }
+  | { status: "corrupt" }
+  | { status: "current"; count: number };
 
 /**
  * Build the in-memory index by embedding three text representations per
@@ -169,6 +170,23 @@ export function rankBySituation(
     .slice(0, k);
 }
 
+/** Rank by evidence cosine for offline inspection and evaluation. */
+export function rankByEvidence(
+  index: ExperienceIndex,
+  queryVector: number[],
+  k = 5
+): RankedArtifact[] {
+  if (k <= 0 || index.items.length === 0) return [];
+
+  return index.items
+    .map((item) => ({
+      score: cosineSimilarity(queryVector, item.evidenceVector),
+      artifact: item.artifact,
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, k);
+}
+
 function encodeVector(vector: number[]): Buffer {
   return Buffer.from(new Float32Array(vector).buffer);
 }
@@ -178,34 +196,91 @@ function decodeVector(blob: Buffer): number[] {
   return Array.from(new Float32Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 4));
 }
 
-/** Replace the local SQLite index with a full rebuild. */
+/** Inspect index schema state without mutating the database. */
+export function inspectIndex(dbPath: string): ExperienceIndexInspection {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  } catch {
+    return { status: "missing" };
+  }
+
+  try {
+    const metaColumns = db.prepare("PRAGMA table_info(index_meta)").all() as Array<{
+      name: string;
+    }>;
+    if (metaColumns.length === 0) return { status: "corrupt" };
+    if (!metaColumns.some((column) => column.name === "schema_version")) {
+      return { status: "incompatible", schemaVersion: null };
+    }
+
+    const meta = db
+      .prepare("SELECT schema_version, count FROM index_meta WHERE id = 1")
+      .get() as { schema_version: number; count: number } | undefined;
+    if (!meta) return { status: "corrupt" };
+    if (meta.schema_version !== EXPERIENCE_INDEX_SCHEMA_VERSION) {
+      return { status: "incompatible", schemaVersion: meta.schema_version };
+    }
+
+    const experienceColumns = new Set(
+      (
+        db.prepare("PRAGMA table_info(experiences)").all() as Array<{
+          name: string;
+        }>
+      ).map((column) => column.name)
+    );
+    for (const required of ["vector", "situation_vector", "evidence_vector", "artifact_json"]) {
+      if (!experienceColumns.has(required)) return { status: "corrupt" };
+    }
+    const ftsTable = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'experiences_fts'")
+      .get();
+    if (!ftsTable) return { status: "corrupt" };
+    return { status: "current", count: meta.count };
+  } catch {
+    return { status: "corrupt" };
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Replace the local SQLite index atomically.
+ *
+ * The complete rebuild is committed to a sibling temporary database before it
+ * replaces the live file, so an insert or schema failure preserves the last
+ * valid index.
+ */
 export function saveIndex(dbPath: string, index: ExperienceIndex): void {
   ensureParentDir(dbPath);
-  const db = new Database(dbPath);
+  const tempPath = `${dbPath}.${process.pid}.${randomUUID()}.tmp`;
+  let db: Database.Database | undefined;
+
   try {
-    db.exec(SCHEMA);
+    db = new Database(tempPath);
+    const rebuild = db.transaction(() => {
+      db!.exec(SCHEMA);
 
-    db.prepare(
-      `INSERT INTO index_meta (id, indexed_at, provider, model, dimensions, count, schema_version)
-       VALUES (1, @indexedAt, @provider, @model, @dimensions, @count, @schemaVersion)`
-    ).run({
-      indexedAt: index.indexedAt,
-      provider: index.embedding.provider,
-      model: index.embedding.model,
-      dimensions: index.embedding.dimensions,
-      count: index.count,
-      schemaVersion: index.schemaVersion,
-    });
+      db!.prepare(
+        `INSERT INTO index_meta (id, indexed_at, provider, model, dimensions, count, schema_version)
+         VALUES (1, @indexedAt, @provider, @model, @dimensions, @count, @schemaVersion)`
+      ).run({
+        indexedAt: index.indexedAt,
+        provider: index.embedding.provider,
+        model: index.embedding.model,
+        dimensions: index.embedding.dimensions,
+        count: index.count,
+        schemaVersion: index.schemaVersion,
+      });
 
-    const insert = db.prepare(
-      `INSERT INTO experiences (id, vector, situation_vector, evidence_vector, artifact_json)
-       VALUES (@id, @vector, @situationVector, @evidenceVector, @artifactJson)`
-    );
-    const insertFts = db.prepare(
-      `INSERT INTO experiences_fts (id, title, domains, stack, problem, approach, paths)
-       VALUES (@id, @title, @domains, @stack, @problem, @approach, @paths)`
-    );
-    const insertAll = db.transaction(() => {
+      const insert = db!.prepare(
+        `INSERT INTO experiences (id, vector, situation_vector, evidence_vector, artifact_json)
+         VALUES (@id, @vector, @situationVector, @evidenceVector, @artifactJson)`
+      );
+      const insertFts = db!.prepare(
+        `INSERT INTO experiences_fts (id, title, domains, stack, problem, approach, paths)
+         VALUES (@id, @title, @domains, @stack, @problem, @approach, @paths)`
+      );
       for (const item of index.items) {
         insert.run({
           id: item.id,
@@ -218,9 +293,14 @@ export function saveIndex(dbPath: string, index: ExperienceIndex): void {
         insertFts.run({ id: item.id, ...lex });
       }
     });
-    insertAll();
-  } finally {
+    rebuild();
     db.close();
+    db = undefined;
+    renameSync(tempPath, dbPath);
+  } catch (error) {
+    db?.close();
+    rmSync(tempPath, { force: true });
+    throw error;
   }
 }
 

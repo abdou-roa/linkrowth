@@ -6,7 +6,14 @@ import { describe, it } from "node:test";
 import Database from "better-sqlite3";
 import type { ExperienceArtifact, ExperienceIndex, IndexedExperience } from "./types";
 import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "./types";
-import { evidenceScore, loadIndex, rankByLexical, rankBySituation, rankIndex } from "./store";
+import {
+  evidenceScore,
+  inspectIndex,
+  loadIndex,
+  rankByLexical,
+  rankBySituation,
+  rankIndex,
+} from "./store";
 import { cosineSimilarity, evidenceText, lexicalFields, retrievalText, situationText } from "./vector";
 
 const artifact = (
@@ -349,13 +356,19 @@ describe("experience index store (v3)", () => {
       writeFixtureIndexV1(dbPath, items);
 
       assert.equal(loadIndex(dbPath), null);
+      assert.deepEqual(inspectIndex(dbPath), {
+        status: "incompatible",
+        schemaVersion: null,
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   it("returns null when the sqlite index file is missing", () => {
-    assert.equal(loadIndex(join(tmpdir(), "does-not-exist-experience-index.db")), null);
+    const dbPath = join(tmpdir(), "does-not-exist-experience-index.db");
+    assert.equal(loadIndex(dbPath), null);
+    assert.deepEqual(inspectIndex(dbPath), { status: "missing" });
   });
 
   it("rankByLexical returns BM25 hits from FTS5 table", () => {

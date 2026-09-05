@@ -1,7 +1,15 @@
 import { dataPath } from "../paths";
 import { envInt } from "../util/pool";
 import { buildFts5Query } from "./fts";
-import { loadIndex, rankByLexical, rankBySituation, rankIndex } from "./store";
+import {
+  inspectIndex,
+  loadIndex,
+  rankByEvidence,
+  rankByLexical,
+  rankBySituation,
+  rankIndex,
+} from "./store";
+import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "../types";
 
 type Channel = "single" | "situation" | "evidence" | "lexical";
 
@@ -38,6 +46,23 @@ async function main(): Promise<void> {
   const indexPath = dataPath("experience-index.db");
   const index = loadIndex(indexPath);
   if (!index?.items?.length) {
+    const inspection = inspectIndex(indexPath);
+    if (inspection.status === "incompatible") {
+      const found =
+        inspection.schemaVersion === null
+          ? "an unversioned legacy index"
+          : `schema v${inspection.schemaVersion}`;
+      throw new Error(
+        `Index schema v${EXPERIENCE_INDEX_SCHEMA_VERSION} required, but ${found} was found. ` +
+          "Run npm run index to rebuild it."
+      );
+    }
+    if (inspection.status === "corrupt") {
+      throw new Error("The experience index is corrupt or incomplete. Run npm run index.");
+    }
+    if (inspection.status === "current") {
+      throw new Error("The experience index is empty. Run npm run distill && npm run index.");
+    }
     throw new Error(
       "No index. Run npm run distill && npm run index first (expected data/experience-index.db)."
     );
@@ -75,13 +100,15 @@ async function main(): Promise<void> {
   const hits =
     channel === "situation"
       ? rankBySituation(index, vector, k)
+      : channel === "evidence"
+        ? rankByEvidence(index, vector, k)
       : rankIndex(index, vector, k);
 
   const channelLabel =
     channel === "situation"
       ? "situation cosine"
       : channel === "evidence"
-        ? "evidence cosine (not yet ranked — showing single-vector fallback)"
+        ? "evidence cosine"
         : "single-vector cosine";
 
   console.log(`Top ${hits.length} for: ${query}`);

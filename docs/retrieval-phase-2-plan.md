@@ -15,9 +15,9 @@ Phase 2 scope, verbatim from the design's incremental rollout:
 - compare against the baseline before changing production selection.
 
 **Guiding constraint:** Phase 2 changes *how experience is represented and
-scored*, but must **not** change what production injects into `proofPoints`
-until the labeled comparison in step 5 justifies it. The new path ships behind a
-strategy flag, defaulting to the current single-vector baseline.
+scored* behind an opt-in strategy flag. The default production path remains the
+single-vector baseline until the labeled comparison in step 5 justifies a
+change.
 
 ---
 
@@ -91,11 +91,12 @@ Add `schema_version` to `index_meta` and two BLOB columns to `experiences`:
 --   evidence_vector  BLOB NOT NULL
 ```
 
-`EXPERIENCE_INDEX_SCHEMA_VERSION = 2` becomes a shared constant. `loadIndex()`
-returns `null` (→ `no_index` outcome, static fallback) when `schema_version`
-is absent or `!= 2` while the split-vector strategy is active. When the
-single-vector strategy is active, the agent still reads a v1 index (see §D5 for
-how both coexist behind the flag).
+`EXPERIENCE_INDEX_SCHEMA_VERSION = 2` becomes a shared constant. Both
+strategies require the authoritative v2 file because it retains the combined
+vector alongside the two split vectors. `loadIndex()` returns `null`
+(→ `no_index` outcome, static fallback) when `schema_version` is absent or
+`!= 2`; runtime and CLI diagnostics distinguish that migration case from a
+missing file and instruct the operator to rebuild.
 
 ### D3. Broad candidate retrieval by situation cosine
 
@@ -148,14 +149,14 @@ Add `LINKROWTH_RETRIEVAL_STRATEGY` (or extend the existing tier concept):
 
 | Value | Meaning |
 | --- | --- |
-| `single` (default) | Current single-vector cosine pipeline. Reads a v1 index. |
+| `single` (default) | Current combined-vector cosine pipeline. Reads `vector` from a v2 index. |
 | `split` | Phase 2 situation/evidence pipeline. Reads a v2 index. |
 
 The flag lets us A/B the baseline against the split representation without
 rebuilding application code (design requirement: "each phase should be
-deployable behind a strategy flag"). Selecting `split` against a v1 index (or
-`single` against a v2-only index) logs a clear mismatch and falls back to static
-context rather than mis-scoring.
+deployable behind a strategy flag"). Selecting either strategy against an old
+or incompatible index logs a clear mismatch and falls back to static context
+rather than mis-scoring. Upgrading from v1 requires one offline rebuild.
 
 ---
 
@@ -181,8 +182,8 @@ context rather than mis-scoring.
 
 - `agent/src/context/experience/types.ts`: mirror the v2 shapes
   (`situationVector`, `evidenceVector`, `schemaVersion`).
-- `agent/src/context/experience/store.ts`: `loadIndex()` reads both BLOBs +
-  `schema_version`; reject `!= 2` under the `split` strategy. Add
+- `agent/src/context/experience/store.ts`: `loadIndex()` reads all three BLOBs +
+  `schema_version`; reject `!= 2` for every strategy. Add
   `rankBySituation(index, queryVector, k)` (cosine over `situationVector`) and a
   helper `evidenceScore(item, evidenceVector)` (cosine over `evidenceVector`)
   used only to annotate the trace in Phase 2.
@@ -200,13 +201,14 @@ context rather than mis-scoring.
 
 - `agent/src/context/retrieveContext.ts`:
   - Resolve `LINKROWTH_RETRIEVAL_STRATEGY`.
-  - `single`: unchanged behavior.
+  - `single`: unchanged combined-vector ranking behavior, using the v2 file.
   - `split`: embed `situationQuery` → `rankBySituation(..., candidatePoolSize)`
     → `evaluateHits()` (unchanged eligibility) → **still inject on situation
     channel only**. If an analysis is available (test/eval injection point),
     compute each candidate's evidence cosine and attach it to the trace hit.
   - Keep the current graceful-degradation ladder
     (`empty_query`, `no_index`, `embed_failed`, `no_survivors`).
+  - Diagnose incompatible/corrupt files before taking the `no_index` fallback.
 
 ### WB5 — Traces: version bump + per-channel signals
 
@@ -215,8 +217,9 @@ context rather than mis-scoring.
   `situationScore` / `evidenceScore` to `RetrievalTraceHit`, `strategy` and
   index `schemaVersion` to params/index meta, and the evidence-query provenance.
 - `agent/src/persistence/retrievalTrace/repository.ts` +
-  `db/migrations/`: additive migration for the new nullable columns/JSON so
-  v1 traces remain readable.
+  `db/migrations/`: additive nullable `query_headline` and
+  `query_evidence_text` columns plus JSON payload evolution so v1 traces remain
+  readable.
 
 ### WB6 — Docs
 
@@ -245,9 +248,9 @@ keep their meaning.
 
 ## Evaluation: compare against the baseline before changing production
 
-This is the gate before any production selection change (design acceptance
-criteria 1–8). Nothing in Phase 2 alters injected proof points until this
-passes.
+This is the gate before changing the default production strategy (design
+acceptance criteria 1–8). The opt-in split path can be exercised by tests and
+evaluation before that gate.
 
 ### Labeled set (bootstrap)
 
@@ -321,9 +324,9 @@ Existing suites to keep green: `agent/src/context/retrieveContext.test.ts`,
 
 ## Rollout order (PR stack)
 
-1. **PR A — schema + distill build:** v2 schema constant, `situationText` /
-   `evidenceText`, `buildIndex` / `saveIndex` two-vector write, CLI `--channel`.
-   (Distill-only; agent still reads v1 under `single`.)
+1. **PR A — schema + distill build:** v2 schema constant, `retrievalText` /
+   `situationText` / `evidenceText`, atomic `buildIndex` / `saveIndex`
+   three-vector write, CLI `--channel`.
 2. **PR B — agent read + split ranking behind flag:** `loadIndex` v2,
    `rankBySituation`, strategy flag, `retrieveContext` split path injecting on
    situation only. Trace schema bump + migration.

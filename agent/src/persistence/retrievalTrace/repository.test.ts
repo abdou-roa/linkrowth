@@ -3,6 +3,7 @@ import { afterEach, describe, it } from "node:test";
 import {
   InMemoryRetrievalTraceRepository,
   NoopRetrievalTraceRepository,
+  PostgresRetrievalTraceRepository,
   createRetrievalTraceRepository,
 } from "./repository";
 import { RETRIEVAL_TRACE_SCHEMA_VERSION } from "./types";
@@ -46,6 +47,58 @@ describe("NoopRetrievalTraceRepository", () => {
   it("accepts traces without throwing", async () => {
     const repo = new NoopRetrievalTraceRepository();
     await assert.doesNotReject(repo.save(sampleTrace, {}));
+  });
+});
+
+describe("PostgresRetrievalTraceRepository", () => {
+  it("persists headline and evidence-query provenance", async () => {
+    let captured:
+      | {
+          text: string;
+          values: unknown[];
+        }
+      | undefined;
+    const pool = {
+      query: async (text: string, values: unknown[]) => {
+        captured = { text, values };
+        return { rows: [] };
+      },
+    };
+    const repo = new PostgresRetrievalTraceRepository(pool as never);
+
+    await repo.save(
+      {
+        ...sampleTrace,
+        query: {
+          text: "durable suggestion jobs",
+          headline: "Staff backend engineer",
+          evidenceText: "explicit claim semantics and retries",
+        },
+      },
+      {}
+    );
+
+    assert.ok(captured);
+    assert.match(captured.text, /query_headline, query_evidence_text/);
+    assert.equal(captured.values[6], "durable suggestion jobs");
+    assert.equal(captured.values[7], "Staff backend engineer");
+    assert.equal(captured.values[8], "explicit claim semantics and retries");
+  });
+
+  it("persists null for absent optional query provenance", async () => {
+    let values: unknown[] = [];
+    const pool = {
+      query: async (_text: string, bound: unknown[]) => {
+        values = bound;
+        return { rows: [] };
+      },
+    };
+    const repo = new PostgresRetrievalTraceRepository(pool as never);
+
+    await repo.save(sampleTrace, {});
+
+    assert.equal(values[7], null);
+    assert.equal(values[8], null);
   });
 });
 
