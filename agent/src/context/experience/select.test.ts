@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExperienceArtifact, RankedArtifact } from "./types";
 import {
+  buildCandidateWindow,
   evaluateHits,
+  evaluateHybridHits,
   filterInjectableItems,
   isInjectableArtifact,
   mergeProofPoints,
@@ -91,6 +93,42 @@ describe("isInjectableArtifact", () => {
   });
 });
 
+describe("buildCandidateWindow", () => {
+  it("counts only eligible candidates toward the pool cap and retains exclusions", () => {
+    const window = buildCandidateWindow(
+      [
+        hit(0.99, "private", { shareability: "private" }),
+        hit(0.98, "low", { confidence: "low" }),
+        hit(0.97, "empty", { claimableLine: " " }),
+        hit(0.9, "public"),
+      ],
+      1
+    );
+
+    assert.deepEqual(window.eligible.map((candidate) => candidate.artifact.id), ["public"]);
+    assert.deepEqual(
+      window.entries.map((entry) => ({
+        id: entry.candidate.artifact.id,
+        rank: entry.rank,
+        dropReason: entry.dropReason,
+      })),
+      [
+        { id: "private", rank: 0, dropReason: "shareability" },
+        { id: "low", rank: 1, dropReason: "confidence" },
+        { id: "empty", rank: 2, dropReason: "empty_claim" },
+        { id: "public", rank: 3, dropReason: undefined },
+      ]
+    );
+  });
+
+  it("returns an empty window when the pool size is zero", () => {
+    assert.deepEqual(buildCandidateWindow([hit(1, "public")], 0), {
+      eligible: [],
+      entries: [],
+    });
+  });
+});
+
 describe("selectClaimableHits", () => {
   it("drops private, low-confidence, and below-threshold hits", () => {
     const selected = selectClaimableHits(
@@ -174,6 +212,45 @@ describe("evaluateHits", () => {
       (h) => h.artifact.claimableLine
     );
     assert.deepEqual(fromEvaluate, fromSelect);
+  });
+});
+
+describe("evaluateHybridHits", () => {
+  it("drops weak semantic-only candidates", () => {
+    const candidate = hit(-1, "opposite semantic result");
+    const decisions = evaluateHybridHits(
+      [
+        {
+          artifact: candidate.artifact,
+          rrfScore: 1 / 61,
+          semanticRank: 1,
+          situationScore: -1,
+        },
+      ],
+      { minSemanticScore: 0.3, k: 5 }
+    );
+
+    assert.equal(decisions[0]?.selected, false);
+    assert.equal(decisions[0]?.dropReason, "min_score");
+  });
+
+  it("admits lexical matches even when their semantic score is below the floor", () => {
+    const candidate = hit(-0.5, "exact lexical recovery");
+    const decisions = evaluateHybridHits(
+      [
+        {
+          artifact: candidate.artifact,
+          rrfScore: 2 / 61,
+          semanticRank: 1,
+          lexicalRank: 1,
+          situationScore: -0.5,
+          bm25Score: -4,
+        },
+      ],
+      { minSemanticScore: 0.3, k: 5 }
+    );
+
+    assert.equal(decisions[0]?.selected, true);
   });
 });
 

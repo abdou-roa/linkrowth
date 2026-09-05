@@ -7,11 +7,15 @@
 --
 -- v3 fields added to the JSONB payloads (TypeScript types in
 -- agent/src/persistence/retrievalTrace/types.ts):
+--   candidates[].semanticRank       number | undefined
 --   candidates[].lexicalRank        number | undefined
 --   candidates[].bm25Score          number | undefined
 --   candidates[].rrfScore           number | undefined
+--   candidates[].prefiltered        boolean | undefined
 --   params.rrfC                     number (hybrid strategy)
 --   params.lexicalPoolSize          number (hybrid strategy)
 --   params.semanticPoolSize         number (hybrid strategy)
 --   params.bm25Weights              object (hybrid strategy)
+--   params.hybridAdmission          string (hybrid strategy)
+--   params.lexicalChannel           object (status/query/fallback diagnostics)
 --   timings.lexicalMs               number | undefined

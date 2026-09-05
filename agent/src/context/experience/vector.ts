@@ -1,4 +1,5 @@
 import type { ExperienceArtifact } from "./types";
+import { normalizeTechnicalTerms } from "./fts";
 
 /**
  * Combined retrieval text — all semantic fields in one block.
@@ -68,12 +69,12 @@ export function lexicalFields(artifact: ExperienceArtifact): {
   paths: string;
 } {
   return {
-    title: artifact.title.trim(),
-    domains: artifact.domains.join(", "),
-    stack: artifact.stack.join(", "),
-    problem: artifact.problem.trim(),
-    approach: artifact.approach.trim(),
-    paths: artifact.paths.slice(0, 24).join(" "),
+    title: normalizeTechnicalTerms(artifact.title.trim()),
+    domains: normalizeTechnicalTerms(artifact.domains.join(", ")),
+    stack: normalizeTechnicalTerms(artifact.stack.join(", ")),
+    problem: normalizeTechnicalTerms(artifact.problem.trim()),
+    approach: normalizeTechnicalTerms(artifact.approach.trim()),
+    paths: normalizeTechnicalTerms(artifact.paths.slice(0, 24).join(" ")),
   };
 }
 

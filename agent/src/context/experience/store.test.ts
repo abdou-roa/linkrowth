@@ -6,7 +6,16 @@ import { describe, it } from "node:test";
 import Database from "better-sqlite3";
 import type { ExperienceArtifact, ExperienceIndex, IndexedExperience } from "./types";
 import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "./types";
-import { evidenceScore, loadIndex, rankByLexical, rankBySituation, rankIndex } from "./store";
+import {
+  buildFts5Query,
+  evidenceScore,
+  inspectIndex,
+  LexicalSearchError,
+  loadIndex,
+  rankByLexical,
+  rankBySituation,
+  rankIndex,
+} from "./store";
 import { cosineSimilarity, evidenceText, lexicalFields, retrievalText, situationText } from "./vector";
 
 const artifact = (
@@ -310,10 +319,10 @@ describe("experience index store (v3)", () => {
       writeFixtureIndexV2(dbPath, makeV2Index(near, far));
 
       const loaded = loadIndex(dbPath)!;
-      const hits = rankBySituation(loaded, [1, 0, 0], 2);
+      const hits = rankBySituation(loaded, [1, 0, 0], 2).eligible;
       assert.equal(hits[0]?.artifact.id, "near", "situation cosine should rank 'near' first");
 
-      const combined = rankIndex(loaded, [1, 0, 0], 2);
+      const combined = rankIndex(loaded, [1, 0, 0], 2).eligible;
       assert.equal(combined[0]?.artifact.id, "far", "combined vector ranks 'far' first");
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -325,7 +334,7 @@ describe("experience index store (v3)", () => {
       indexedAt: "2026-08-27T00:00:00Z",
       schemaVersion: EXPERIENCE_INDEX_SCHEMA_VERSION,
       embedding: { provider: "test", model: "fake", dimensions: 3 },
-      count: 3,
+      count: 5,
       items: [
         {
           id: "private-top",
@@ -342,6 +351,22 @@ describe("experience index store (v3)", () => {
           artifact: artifact("low-top", "low conf", { confidence: "low" }),
         },
         {
+          id: "private-extra",
+          vector: [0.98, 0.02, 0],
+          situationVector: [0.98, 0.02, 0],
+          evidenceVector: [0.98, 0.02, 0],
+          artifact: artifact("private-extra", "secret extra", {
+            shareability: "private",
+          }),
+        },
+        {
+          id: "empty-extra",
+          vector: [0.97, 0.03, 0],
+          situationVector: [0.97, 0.03, 0],
+          evidenceVector: [0.97, 0.03, 0],
+          artifact: artifact("empty-extra", "empty", { claimableLine: " " }),
+        },
+        {
           id: "public-third",
           vector: [0.9, 0.1, 0],
           situationVector: [0.9, 0.1, 0],
@@ -351,13 +376,20 @@ describe("experience index store (v3)", () => {
       ],
     };
 
-    const combined = rankIndex(index, [1, 0, 0], 1);
+    const combinedWindow = rankIndex(index, [1, 0, 0], 1);
+    const combined = combinedWindow.eligible;
     assert.equal(combined.length, 1);
     assert.equal(combined[0]?.artifact.id, "public-third");
+    assert.deepEqual(
+      combinedWindow.entries.map((entry) => entry.dropReason),
+      ["shareability", "confidence", "shareability", "empty_claim", undefined]
+    );
 
-    const situation = rankBySituation(index, [1, 0, 0], 1);
+    const situationWindow = rankBySituation(index, [1, 0, 0], 1);
+    const situation = situationWindow.eligible;
     assert.equal(situation.length, 1);
     assert.equal(situation[0]?.artifact.id, "public-third");
+    assert.equal(situationWindow.entries.length, 5);
   });
 
   it("evidenceScore returns cosine between item evidenceVector and query", () => {
@@ -389,13 +421,19 @@ describe("experience index store (v3)", () => {
       writeFixtureIndexV1(dbPath, items);
 
       assert.equal(loadIndex(dbPath), null);
+      assert.deepEqual(inspectIndex(dbPath), {
+        status: "incompatible",
+        schemaVersion: null,
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   it("returns null when the sqlite index file is missing", () => {
-    assert.equal(loadIndex(join(tmpdir(), "does-not-exist-experience-index.db")), null);
+    const dbPath = join(tmpdir(), "does-not-exist-experience-index.db");
+    assert.equal(loadIndex(dbPath), null);
+    assert.deepEqual(inspectIndex(dbPath), { status: "missing" });
   });
 
   it("rankByLexical returns BM25 hits from FTS5 table", () => {
@@ -441,61 +479,60 @@ describe("experience index store (v3)", () => {
 
       writeFixtureIndexV3(dbPath, index);
 
-      const hits = rankByLexical(dbPath, "postgres durable jobs", 5);
+      const hits = rankByLexical(
+        dbPath,
+        buildFts5Query("postgres durable jobs"),
+        5
+      ).eligible;
       assert.ok(hits.length >= 1);
       assert.equal(hits[0]?.artifact.id, "postgres");
       assert.ok(hits[0]!.bm25Score < 0, "bm25 scores are negative; lower = better");
+
+      const punctuationSafe = rankByLexical(
+        dbPath,
+        buildFts5Query("How do durable Postgres jobs work?"),
+        5
+      ).eligible;
+      assert.equal(punctuationSafe[0]?.artifact.id, "postgres");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it("rankByLexical over-fetches and skips non-injectable FTS hits", () => {
+  it("rankByLexical finds eligible hits behind more than three stronger exclusions", () => {
     const dir = mkdtempSync(join(tmpdir(), "agent-experience-index-fts-elig-"));
     const dbPath = join(dir, "experience-index.db");
 
     try {
-      const privateHit = artifact("private-jobs", "Postgres private jobs", {
-        domains: ["postgres", "jobs"],
-        stack: ["Postgres"],
-        problem: "Need durable suggestion jobs privately",
-        approach: "Queued rows",
-        shareability: "private",
-      });
-      const lowHit = artifact("low-jobs", "Postgres low confidence jobs", {
-        domains: ["postgres", "jobs"],
-        stack: ["Postgres"],
-        problem: "Need durable suggestion jobs low",
-        approach: "Queued rows",
-        confidence: "low",
-      });
+      const privateHits = Array.from({ length: 4 }, (_, index) =>
+        artifact(`private-jobs-${index}`, `Postgres durable private jobs ${index}`, {
+          domains: ["postgres", "durable", "jobs"],
+          stack: ["Postgres"],
+          problem: "Postgres durable jobs retries",
+          approach: "Durable Postgres jobs",
+          shareability: "private",
+        })
+      );
       const publicHit = artifact("public-jobs", "Postgres public jobs", {
-        domains: ["postgres", "jobs"],
-        stack: ["Postgres"],
-        problem: "Need durable suggestion jobs publicly",
-        approach: "Queued rows with claim semantics",
+        domains: [],
+        stack: [],
+        problem: "",
+        approach: "",
       });
 
       const index: ExperienceIndex = {
         indexedAt: "2026-08-27T00:00:00Z",
         schemaVersion: EXPERIENCE_INDEX_SCHEMA_VERSION,
         embedding: { provider: "test", model: "fake", dimensions: 3 },
-        count: 3,
+        count: 5,
         items: [
-          {
-            id: "private-jobs",
+          ...privateHits.map((privateHit) => ({
+            id: privateHit.id,
             vector: [1, 0, 0],
             situationVector: [1, 0, 0],
             evidenceVector: [1, 0, 0],
             artifact: privateHit,
-          },
-          {
-            id: "low-jobs",
-            vector: [1, 0, 0],
-            situationVector: [1, 0, 0],
-            evidenceVector: [1, 0, 0],
-            artifact: lowHit,
-          },
+          })),
           {
             id: "public-jobs",
             vector: [1, 0, 0],
@@ -508,12 +545,22 @@ describe("experience index store (v3)", () => {
 
       writeFixtureIndexV3(dbPath, index);
 
-      const hits = rankByLexical(dbPath, "postgres durable jobs", 1);
-      assert.equal(hits.length, 1);
-      assert.equal(hits[0]?.artifact.id, "public-jobs");
-      assert.equal(hits[0]?.artifact.shareability, "public");
+      const window = rankByLexical(dbPath, buildFts5Query("postgres durable jobs"), 1);
+      assert.equal(window.eligible.length, 1);
+      assert.equal(window.eligible[0]?.artifact.id, "public-jobs");
+      assert.equal(window.entries.length, 5);
+      assert.ok(window.entries.slice(0, 4).every((entry) => entry.dropReason === "shareability"));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("rankByLexical distinguishes database failures from zero hits", () => {
+    const dbPath = join(tmpdir(), `missing-fts-${process.pid}.db`);
+    assert.throws(
+      () => rankByLexical(dbPath, buildFts5Query("postgres"), 5),
+      (error) =>
+        error instanceof LexicalSearchError && error.reason === "db_open_failed"
+    );
   });
 });

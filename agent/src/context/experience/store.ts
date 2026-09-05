@@ -7,18 +7,85 @@ import type {
   RankedArtifact,
 } from "./types";
 import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "./types";
-import { isInjectableArtifact } from "./select";
+import { buildCandidateWindow, type CandidateWindow } from "./select";
 import { buildFts5Query, DEFAULT_BM25_WEIGHTS, type Bm25Weights } from "./fts";
 import { cosineSimilarity } from "./vector";
 
 export { buildFts5Query, fuseRRF, DEFAULT_BM25_WEIGHTS, type Bm25Weights } from "./fts";
 
-/** FTS over-fetch multiplier so non-injectable rows do not starve the lexical pool. */
-const LEXICAL_OVERFETCH_MULTIPLIER = 3;
+export type ExperienceIndexInspection =
+  | { status: "missing" }
+  | { status: "incompatible"; schemaVersion: number | null }
+  | { status: "corrupt" }
+  | { status: "current"; count: number };
+
+export type LexicalSearchFailureReason =
+  | "db_open_failed"
+  | "missing_fts_table"
+  | "fts_syntax_error"
+  | "fts_error";
+
+export class LexicalSearchError extends Error {
+  constructor(
+    readonly reason: LexicalSearchFailureReason,
+    message: string
+  ) {
+    super(message);
+    this.name = "LexicalSearchError";
+  }
+}
 
 function decodeVector(blob: Buffer): number[] {
   const aligned = Buffer.from(blob);
   return Array.from(new Float32Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 4));
+}
+
+/** Inspect an index that failed to load so callers can emit an actionable diagnostic. */
+export function inspectIndex(dbPath: string): ExperienceIndexInspection {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  } catch {
+    return { status: "missing" };
+  }
+
+  try {
+    const metaColumns = db.prepare("PRAGMA table_info(index_meta)").all() as Array<{
+      name: string;
+    }>;
+    if (metaColumns.length === 0) return { status: "corrupt" };
+    if (!metaColumns.some((column) => column.name === "schema_version")) {
+      return { status: "incompatible", schemaVersion: null };
+    }
+
+    const meta = db
+      .prepare("SELECT schema_version, count FROM index_meta WHERE id = 1")
+      .get() as { schema_version: number; count: number } | undefined;
+    if (!meta) return { status: "corrupt" };
+    if (meta.schema_version !== EXPERIENCE_INDEX_SCHEMA_VERSION) {
+      return { status: "incompatible", schemaVersion: meta.schema_version };
+    }
+
+    const experienceColumns = new Set(
+      (
+        db.prepare("PRAGMA table_info(experiences)").all() as Array<{
+          name: string;
+        }>
+      ).map((column) => column.name)
+    );
+    for (const required of ["vector", "situation_vector", "evidence_vector", "artifact_json"]) {
+      if (!experienceColumns.has(required)) return { status: "corrupt" };
+    }
+    const ftsTable = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'experiences_fts'")
+      .get();
+    if (!ftsTable) return { status: "corrupt" };
+    return { status: "current", count: meta.count };
+  } catch {
+    return { status: "corrupt" };
+  } finally {
+    db.close();
+  }
 }
 
 /** Load a schema-v3 experience index from SQLite, or null if missing/incompatible. */
@@ -96,17 +163,16 @@ export function rankIndex(
   index: ExperienceIndex,
   queryVector: number[],
   k = 5
-): RankedArtifact[] {
-  if (k <= 0 || index.items.length === 0) return [];
+): CandidateWindow<RankedArtifact> {
+  if (k <= 0 || index.items.length === 0) return { eligible: [], entries: [] };
 
-  return index.items
-    .filter((item) => isInjectableArtifact(item.artifact))
+  const ranked = index.items
     .map((item) => ({
       score: cosineSimilarity(queryVector, item.vector),
       artifact: item.artifact,
     }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, k);
+    .sort((a, b) => b.score - a.score);
+  return buildCandidateWindow(ranked, k);
 }
 
 /** Rank by situation cosine only — high-recall candidate generation for the split strategy. */
@@ -114,17 +180,16 @@ export function rankBySituation(
   index: ExperienceIndex,
   queryVector: number[],
   k = 5
-): RankedArtifact[] {
-  if (k <= 0 || index.items.length === 0) return [];
+): CandidateWindow<RankedArtifact> {
+  if (k <= 0 || index.items.length === 0) return { eligible: [], entries: [] };
 
-  return index.items
-    .filter((item) => isInjectableArtifact(item.artifact))
+  const ranked = index.items
     .map((item) => ({
       score: cosineSimilarity(queryVector, item.situationVector),
       artifact: item.artifact,
     }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, k);
+    .sort((a, b) => b.score - a.score);
+  return buildCandidateWindow(ranked, k);
 }
 
 /**
@@ -137,28 +202,30 @@ export function evidenceScore(item: IndexedExperience, evidenceQueryVector: numb
 }
 
 /**
- * BM25 lexical search over the FTS5 index. Returns [] on empty query or FTS error.
+ * BM25 lexical search over the FTS5 index.
  * bm25() returns negative values; lower (more negative) = better match.
  *
- * Over-fetches then keeps only injectable artifacts so non-injectable FTS hits
- * do not consume the caller-requested pool (Phase 1).
+ * The current index is intentionally small, so all ordered matches are scanned
+ * until the eligibility-aware pool is full. No arbitrary over-fetch multiplier
+ * can starve an eligible result behind ineligible rows.
  */
 export function rankByLexical(
   dbPath: string,
   fts5Query: string,
   k = 5,
   weights: Bm25Weights = DEFAULT_BM25_WEIGHTS
-): LexicalRankedArtifact[] {
-  const query = buildFts5Query(fts5Query);
-  if (!query || k <= 0) return [];
-
-  const fetchLimit = Math.max(k * LEXICAL_OVERFETCH_MULTIPLIER, k);
+): CandidateWindow<LexicalRankedArtifact> {
+  const query = fts5Query.trim();
+  if (!query || k <= 0) return { eligible: [], entries: [] };
 
   let db: Database.Database;
   try {
     db = new Database(dbPath, { readonly: true, fileMustExist: true });
-  } catch {
-    return [];
+  } catch (error) {
+    throw new LexicalSearchError(
+      "db_open_failed",
+      error instanceof Error ? error.message : String(error)
+    );
   }
 
   try {
@@ -170,12 +237,10 @@ export function rankByLexical(
          FROM experiences_fts f
          JOIN experiences e ON e.id = f.id
          WHERE experiences_fts MATCH @query
-         ORDER BY score
-         LIMIT @k`
+         ORDER BY score`
       )
       .all({
         query,
-        k: fetchLimit,
         wTitle: weights.title,
         wDomains: weights.domains,
         wStack: weights.stack,
@@ -184,16 +249,19 @@ export function rankByLexical(
         wPaths: weights.paths,
       }) as Array<{ id: string; score: number; artifact_json: string }>;
 
-    const injectable: LexicalRankedArtifact[] = [];
-    for (const row of rows) {
-      const artifact = JSON.parse(row.artifact_json) as ExperienceArtifact;
-      if (!isInjectableArtifact(artifact)) continue;
-      injectable.push({ bm25Score: row.score, artifact });
-      if (injectable.length >= k) break;
-    }
-    return injectable;
-  } catch {
-    return [];
+    const ranked = rows.map((row) => ({
+      bm25Score: row.score,
+      artifact: JSON.parse(row.artifact_json) as ExperienceArtifact,
+    }));
+    return buildCandidateWindow(ranked, k);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const reason: LexicalSearchFailureReason = message.includes("no such table")
+      ? "missing_fts_table"
+      : message.includes("syntax error")
+        ? "fts_syntax_error"
+        : "fts_error";
+    throw new LexicalSearchError(reason, message);
   } finally {
     db.close();
   }

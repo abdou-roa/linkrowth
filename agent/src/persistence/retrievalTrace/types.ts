@@ -44,6 +44,8 @@ export interface RetrievalTraceHit {
   /** True when the hit survived every filter and became a proof point. */
   selected: boolean;
   dropReason?: RetrievalDropReason;
+  /** True when hard eligibility excluded the artifact before a channel pool cap. */
+  prefiltered?: boolean;
   claimableLine?: string;
   /**
    * Situation cosine when strategy=split (same as score in that mode; explicit
@@ -52,6 +54,8 @@ export interface RetrievalTraceHit {
   situationScore?: number;
   /** Evidence cosine against the analysis-derived query (split strategy, Phase 2+). */
   evidenceScore?: number;
+  /** 1-indexed position in the situation-semantic list (hybrid strategy, Phase 3). */
+  semanticRank?: number;
   /** 1-indexed position in the BM25 list (hybrid strategy, Phase 3). */
   lexicalRank?: number;
   /** Raw SQLite bm25() value (hybrid strategy, Phase 3). */

@@ -234,11 +234,9 @@ describe("retrieveContext trace emission", () => {
     const postgres = trace.candidates.find((c) => c.artifactId === "postgres");
     assert.ok(postgres?.selected, "postgres artifact should be selected");
     const priv = trace.candidates.find((c) => c.artifactId === "private");
-    assert.equal(
-      priv,
-      undefined,
-      "Phase 1: private artifacts are prefiltered out of the candidate pool"
-    );
+    assert.equal(priv?.selected, false);
+    assert.equal(priv?.dropReason, "shareability");
+    assert.equal(priv?.prefiltered, true);
     assert.equal(trace.query.text, "How do you run durable suggestion jobs without Kafka?");
     assert.equal(trace.query.headline, undefined);
   });
@@ -335,9 +333,11 @@ describe("retrieveContext trace emission", () => {
     assert.equal(trace.params.candidatePoolSize, 1);
     assert.deepEqual(
       trace.candidates.map((c) => c.artifactId),
-      ["public-third"]
+      ["private-top", "low-second", "public-third"]
     );
-    assert.ok(trace.candidates[0]?.selected);
+    assert.equal(trace.candidates[0]?.dropReason, "shareability");
+    assert.equal(trace.candidates[1]?.dropReason, "confidence");
+    assert.ok(trace.candidates[2]?.selected);
   });
 
   it("emits no_survivors when everything is filtered out", async () => {
@@ -587,12 +587,23 @@ describe("retrieveContext hybrid strategy", () => {
       {
         loadIndex: () => fixtureIndex(),
         embedQuery: async () => [1, 0, 0],
-        lexicalSearch: () => [
-          {
+        lexicalSearch: () => {
+          const candidate = {
             bm25Score: -5.0,
             artifact: fixtureIndex().items[0]!.artifact,
-          },
-        ],
+          };
+          const rejected = {
+            bm25Score: -4.0,
+            artifact: fixtureIndex().items[1]!.artifact,
+          };
+          return {
+            eligible: [candidate],
+            entries: [
+              { candidate, rank: 0 },
+              { candidate: rejected, rank: 1, dropReason: "shareability" as const },
+            ],
+          };
+        },
         k: 3,
         minScore: 0.3,
         strategy: "hybrid",
@@ -610,18 +621,36 @@ describe("retrieveContext hybrid strategy", () => {
     const trace = last();
     assert.equal(trace.schemaVersion, RETRIEVAL_TRACE_SCHEMA_VERSION);
     assert.equal(trace.params.strategy, "hybrid");
-    assert.equal(trace.params.minScore, 0);
+    assert.equal(trace.params.minScore, 0.3);
     assert.equal(trace.params.rrfC, 60);
     assert.equal(trace.params.candidatePoolSize, 12);
     assert.equal(trace.params.semanticPoolSize, 12);
     assert.equal(trace.params.lexicalPoolSize, 12);
+    assert.equal(trace.params.hybridAdmission, "semantic_floor_or_lexical_match");
+    assert.deepEqual(trace.params.lexicalChannel, {
+      status: "ok",
+      query:
+        '"run" OR "durable" OR "Postgres" OR "suggestion" OR "jobs" OR "Kafka"',
+      hitCount: 1,
+      examinedCount: 2,
+    });
 
     const postgres = trace.candidates.find((c) => c.artifactId === "postgres");
     assert.ok(postgres?.selected);
     assert.ok(postgres?.rrfScore !== undefined);
     assert.ok(postgres?.situationScore !== undefined);
+    assert.equal(postgres?.semanticRank, 1);
     assert.equal(postgres?.lexicalRank, 1);
     assert.equal(postgres?.bm25Score, -5.0);
+
+    const privateCandidates = trace.candidates.filter(
+      (candidate) => candidate.artifactId === "private"
+    );
+    assert.equal(privateCandidates.length, 1, "hybrid prefilter witnesses must be deduplicated");
+    assert.equal(privateCandidates[0]?.dropReason, "shareability");
+    assert.equal(privateCandidates[0]?.prefiltered, true);
+    assert.equal(privateCandidates[0]?.semanticRank, 2);
+    assert.equal(privateCandidates[0]?.lexicalRank, 2);
   });
 
   it("falls back to situation-only when lexical search throws", async () => {
@@ -649,5 +678,45 @@ describe("retrieveContext hybrid strategy", () => {
     const trace = last();
     assert.equal(trace.outcome, "injected");
     assert.equal(trace.params.strategy, "hybrid");
+    assert.deepEqual(trace.params.lexicalChannel, {
+      status: "failed",
+      query: '"run" OR "durable" OR "suggestion" OR "jobs" OR "Kafka"',
+      reason: "fts_error",
+      fallback: "situation_only",
+    });
+  });
+
+  it("abstains when hybrid has only semantic candidates below the cosine floor", async () => {
+    const { sink, last } = capturingSink();
+    const enriched = await retrieveContext(
+      { text: "Completely unrelated subject" },
+      baseContext,
+      {
+        loadIndex: () => fixtureIndex(),
+        embedQuery: async () => [-1, 0, 0],
+        lexicalSearch: () => ({ eligible: [], entries: [] }),
+        k: 3,
+        minScore: 0.3,
+        strategy: "hybrid",
+        traceSink: sink,
+      }
+    );
+
+    assert.deepEqual(enriched, baseContext);
+    const trace = last();
+    assert.equal(trace.outcome, "no_survivors");
+    assert.ok(trace.candidates.every((candidate) => !candidate.selected));
+    assert.equal(
+      trace.candidates.find((candidate) => candidate.artifactId === "postgres")?.dropReason,
+      "min_score"
+    );
+    assert.equal(
+      trace.candidates.find((candidate) => candidate.artifactId === "extension")?.dropReason,
+      "min_score"
+    );
+    assert.equal(
+      trace.candidates.find((candidate) => candidate.artifactId === "private")?.dropReason,
+      "shareability"
+    );
   });
 });

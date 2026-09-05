@@ -11,8 +11,15 @@ import {
   type QueryConstructionTier,
   type RetrievalQuery,
 } from "./queryConstruction";
-import { evaluateHits, mergeProofPoints } from "./experience/select";
 import {
+  evaluateHits,
+  evaluateHybridHits,
+  mergeProofPoints,
+  type CandidateWindow,
+  type CandidateWindowEntry,
+} from "./experience/select";
+import {
+  inspectIndex,
   loadIndex as defaultLoadIndex,
   rankBySituation,
   rankIndex,
@@ -21,6 +28,7 @@ import {
   buildFts5Query,
   fuseRRF,
   DEFAULT_BM25_WEIGHTS,
+  LexicalSearchError,
 } from "./experience/store";
 import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "./experience/types";
 import type { ExperienceIndex, FusedCandidate, LexicalRankedArtifact, RankedArtifact } from "./experience/types";
@@ -42,7 +50,7 @@ export type LexicalSearchFn = (
   dbPath: string,
   query: string,
   k: number
-) => LexicalRankedArtifact[];
+) => CandidateWindow<LexicalRankedArtifact>;
 
 /** Which retrieval representation to use. */
 export type RetrievalStrategy = "single" | "split" | "hybrid";
@@ -172,6 +180,92 @@ function warnIncompatibleIndex(schemaVersion: number): boolean {
   return false;
 }
 
+function warnIndexLoadFailure(indexPath: string): void {
+  const inspection = inspectIndex(indexPath);
+  if (inspection.status === "incompatible") {
+    const found =
+      inspection.schemaVersion === null ? "an unversioned legacy index" : `schema v${inspection.schemaVersion}`;
+    console.warn(
+      `[retrieveContext] Index schema v${EXPERIENCE_INDEX_SCHEMA_VERSION} required, but ${found} was found at ${indexPath}. ` +
+        "Rebuild with npm run index (distill/). Falling back to static context."
+    );
+  } else if (inspection.status === "corrupt") {
+    console.warn(
+      `[retrieveContext] Index at ${indexPath} is corrupt or incomplete. ` +
+        "Rebuild with npm run index (distill/). Falling back to static context."
+    );
+  } else if (inspection.status === "current" && inspection.count === 0) {
+    console.warn(`[retrieveContext] Index at ${indexPath} is empty. Falling back to static context.`);
+  }
+}
+
+function traceEligibilityEntries(
+  entries: Array<CandidateWindowEntry<RankedArtifact>>,
+  decisions: ReturnType<typeof evaluateHits>,
+  strategy: RetrievalStrategy
+): RetrievalTraceHit[] {
+  const decisionsById = new Map(
+    decisions.map((decision) => [decision.hit.artifact.id, decision])
+  );
+  return entries.map((entry) => {
+    const decision = decisionsById.get(entry.candidate.artifact.id);
+    const hit: RetrievalTraceHit = {
+      artifactId: entry.candidate.artifact.id,
+      score: entry.candidate.score,
+      rank: entry.rank,
+      selected: decision?.selected ?? false,
+      dropReason: entry.dropReason ?? decision?.dropReason,
+      claimableLine: entry.candidate.artifact.claimableLine,
+      prefiltered: entry.dropReason !== undefined,
+    };
+    if (strategy === "split") hit.situationScore = entry.candidate.score;
+    return hit;
+  });
+}
+
+function traceHybridEligibilityEntries(
+  semanticEntries: Array<CandidateWindowEntry<RankedArtifact>>,
+  lexicalEntries: Array<CandidateWindowEntry<LexicalRankedArtifact>>
+): RetrievalTraceHit[] {
+  const byId = new Map<string, RetrievalTraceHit>();
+
+  for (const entry of semanticEntries) {
+    if (!entry.dropReason) continue;
+    byId.set(entry.candidate.artifact.id, {
+      artifactId: entry.candidate.artifact.id,
+      score: entry.candidate.score,
+      rank: entry.rank,
+      semanticRank: entry.rank + 1,
+      situationScore: entry.candidate.score,
+      selected: false,
+      dropReason: entry.dropReason,
+      claimableLine: entry.candidate.artifact.claimableLine,
+      prefiltered: true,
+    });
+  }
+  for (const entry of lexicalEntries) {
+    if (!entry.dropReason) continue;
+    const existing = byId.get(entry.candidate.artifact.id);
+    if (existing) {
+      existing.lexicalRank = entry.rank + 1;
+      existing.bm25Score = entry.candidate.bm25Score;
+      continue;
+    }
+    byId.set(entry.candidate.artifact.id, {
+      artifactId: entry.candidate.artifact.id,
+      score: entry.candidate.bm25Score,
+      rank: entry.rank,
+      lexicalRank: entry.rank + 1,
+      bm25Score: entry.candidate.bm25Score,
+      selected: false,
+      dropReason: entry.dropReason,
+      claimableLine: entry.candidate.artifact.claimableLine,
+      prefiltered: true,
+    });
+  }
+  return [...byId.values()];
+}
+
 /**
  * Enrich UserContext with claimable proof points retrieved from the experience index.
  * Graceful: missing index, empty query, or embed failures return baseContext unchanged.
@@ -223,7 +317,7 @@ export async function retrieveContext(
     params.lexicalPoolSize = lexicalPoolSize;
     params.rrfC = rrfC;
     params.bm25Weights = DEFAULT_BM25_WEIGHTS;
-    params.minScore = 0; // RRF scores are not cosine values
+    params.hybridAdmission = "semantic_floor_or_lexical_match";
   }
 
   /** Emit a trace without ever letting persistence break retrieval. */
@@ -290,6 +384,7 @@ export async function retrieveContext(
   }
 
   if (!index?.items?.length) {
+    if (!options.loadIndex) warnIndexLoadFailure(indexPath);
     await emit("no_index");
     return baseContext;
   }
@@ -323,37 +418,70 @@ export async function retrieveContext(
   // --- Candidate generation ---
   let rawHits: RankedArtifact[];
   let fusionById: Map<string, FusedCandidate> | undefined;
+  let fusedCandidates: FusedCandidate[] | undefined;
+  let rankedEntries: Array<CandidateWindowEntry<RankedArtifact>> | undefined;
+  let prefilterCandidates: RetrievalTraceHit[] = [];
   let lexicalMs: number | undefined;
 
   if (strategy === "hybrid") {
     const semanticPoolSize = Math.max(candidatePoolSize, k);
-    const semanticHits = rankBySituation(index, queryVector, semanticPoolSize);
+    const semanticWindow = rankBySituation(index, queryVector, semanticPoolSize);
 
-    let lexicalHits: LexicalRankedArtifact[] = [];
+    let lexicalWindow: CandidateWindow<LexicalRankedArtifact> = {
+      eligible: [],
+      entries: [],
+    };
     const fts5Query = buildFts5Query(query);
     if (fts5Query) {
       const lexicalStart = Date.now();
       try {
         const lexicalFn = options.lexicalSearch ?? rankByLexical;
-        lexicalHits = lexicalFn(indexPath, fts5Query, lexicalPoolSize);
+        lexicalWindow = lexicalFn(indexPath, fts5Query, lexicalPoolSize);
         lexicalMs = Date.now() - lexicalStart;
+        params.lexicalChannel = {
+          status: "ok",
+          query: fts5Query,
+          hitCount: lexicalWindow.eligible.length,
+          examinedCount: lexicalWindow.entries.length,
+        };
       } catch (err) {
+        lexicalMs = Date.now() - lexicalStart;
+        const reason = err instanceof LexicalSearchError ? err.reason : "fts_error";
+        params.lexicalChannel = {
+          status: "failed",
+          query: fts5Query,
+          reason,
+          fallback: "situation_only",
+        };
         console.warn(
           "[retrieveContext] lexical search failed; continuing with situation-only candidates:",
           err instanceof Error ? err.message : err
         );
       }
+    } else {
+      params.lexicalChannel = {
+        status: "skipped",
+        reason: "empty_query",
+        fallback: "situation_only",
+      };
     }
 
-    const fused = fuseRRF(semanticHits, lexicalHits, { c: rrfC });
+    const fused = fuseRRF(semanticWindow.eligible, lexicalWindow.eligible, { c: rrfC });
+    fusedCandidates = fused;
     fusionById = new Map(fused.map((f) => [f.artifact.id, f]));
     rawHits = fused.map((f) => ({ score: f.rrfScore, artifact: f.artifact }));
+    prefilterCandidates = traceHybridEligibilityEntries(
+      semanticWindow.entries,
+      lexicalWindow.entries
+    );
   } else {
     const poolSize = Math.max(candidatePoolSize, k);
-    rawHits =
+    const window =
       strategy === "split"
         ? rankBySituation(index, queryVector, poolSize)
         : rankIndex(index, queryVector, poolSize);
+    rawHits = window.eligible;
+    rankedEntries = window.entries;
   }
 
   // --- Evidence scoring (split strategy, Phase 2) ---
@@ -393,9 +521,11 @@ export async function retrieveContext(
   }
 
   // --- Selection ---
-  const effectiveMinScore = strategy === "hybrid" ? 0 : minScore;
-  const decisions = evaluateHits(rawHits, { minScore: effectiveMinScore, k });
-  const candidates: RetrievalTraceHit[] = decisions.map((decision) => {
+  const decisions =
+    strategy === "hybrid" && fusedCandidates
+      ? evaluateHybridHits(fusedCandidates, { minSemanticScore: minScore, k })
+      : evaluateHits(rawHits, { minScore, k });
+  let candidates: RetrievalTraceHit[] = decisions.map((decision) => {
     const hit: RetrievalTraceHit = {
       artifactId: decision.hit.artifact.id,
       score: decision.hit.score,
@@ -415,7 +545,10 @@ export async function retrieveContext(
       const fused = fusionById.get(decision.hit.artifact.id);
       if (fused) {
         hit.rrfScore = fused.rrfScore;
-        if (fused.semanticRank !== undefined) hit.situationScore = fused.situationScore;
+        if (fused.semanticRank !== undefined) {
+          hit.semanticRank = fused.semanticRank;
+          hit.situationScore = fused.situationScore;
+        }
         if (fused.lexicalRank !== undefined) {
           hit.lexicalRank = fused.lexicalRank;
           hit.bm25Score = fused.bm25Score;
@@ -424,6 +557,17 @@ export async function retrieveContext(
     }
     return hit;
   });
+  if (rankedEntries) {
+    candidates = traceEligibilityEntries(rankedEntries, decisions, strategy);
+    if (strategy === "split" && evidenceVectors) {
+      for (const candidate of candidates) {
+        const score = evidenceVectors.get(candidate.artifactId);
+        if (score !== undefined) candidate.evidenceScore = score;
+      }
+    }
+  } else if (prefilterCandidates.length > 0) {
+    candidates.push(...prefilterCandidates);
+  }
 
   const selected = decisions.filter((decision) => decision.selected).map((d) => d.hit);
 
