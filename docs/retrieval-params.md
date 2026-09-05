@@ -17,6 +17,7 @@ These are the effective defaults when no overrides are set:
 
 ```bash
 LINKROWTH_RETRIEVAL_QUERY_CONSTRUCTION=a
+LINKROWTH_RETRIEVAL_PIPELINE=legacy
 LINKROWTH_RETRIEVAL_STRATEGY=single
 LINKROWTH_RETRIEVAL_K=5
 LINKROWTH_RETRIEVAL_MIN_SCORE=0.3
@@ -40,12 +41,14 @@ embedded.
 
 | Variable | Default | Values | Effect |
 | --- | --- | --- | --- |
+| `LINKROWTH_RETRIEVAL_PIPELINE` | `legacy` | `legacy`<br>`analysis_aware`, `analysis-aware`, `4` | Controls pipeline ordering. Analysis-aware mode always generates hybrid candidates, waits for analyzer/HITL, and reranks before drafting. Internal failure falls back to the configured legacy strategy. |
 | `LINKROWTH_RETRIEVAL_STRATEGY` | `single` | `single` → combined `vector`<br>`split`, `2` → `situation_vector`<br>`hybrid`, `3` → situation cosine + BM25 + RRF | Candidate-generation strategy. |
 | `LINKROWTH_RETRIEVAL_K` | `5` | positive integer | Max proof points injected **after** post-rank filters. |
 | `LINKROWTH_RETRIEVAL_MIN_SCORE` | `0.3` | float | Cosine floor for single/split and the semantic admission floor for hybrid. Hybrid candidates also pass admission when BM25 recovered them. |
 | `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` | `k × 4` | positive integer | Eligible-artifact pool for single/split and hybrid's semantic channel. |
 | `LINKROWTH_RETRIEVAL_LEXICAL_POOL` | `k × 4` | positive integer | Eligible-artifact BM25 pool for hybrid. |
 | `LINKROWTH_RETRIEVAL_RRF_C` | `60` | positive integer | RRF rank constant for hybrid ordering. |
+| `LINKROWTH_RETRIEVAL_EVIDENCE_MIN_SCORE` | `0.3` | float | Provisional evidence-cosine acceptance floor in analysis-aware mode only. |
 
 **Effective pool sizes:**
 
@@ -179,15 +182,20 @@ Hybrid traces additionally record `semanticPoolSize`, `lexicalPoolSize`,
 distinguishes a valid zero-hit BM25 search from a skipped or failed search and
 records situation-only fallback.
 
+Phase 4 traces record `pipeline`, shortlist/post/index fingerprints, evidence
+and generation floors, deterministic ordering, evidence-query field
+provenance, candidate-generation/rerank timings, every candidate signal and
+drop reason, and an explicit `abstentionReason` or `fallbackReason`.
+
 Query text fields on the trace:
 
 | Field | Source |
 | --- | --- |
 | `query.text` | Embedded `situationQuery` |
 | `query.headline` | Author headline (never embedded) |
-| `query.evidenceText` | `buildEvidenceQuery()` output — split strategy only, when `analysis` is available |
+| `query.evidenceText` | `buildEvidenceQuery()` output from analysis and an answered clarification; relevance intent only, never factual evidence |
 
-Trace schema version: `RETRIEVAL_TRACE_SCHEMA_VERSION = 3`.
+Trace schema version: `RETRIEVAL_TRACE_SCHEMA_VERSION = 4`.
 
 ---
 
@@ -232,6 +240,19 @@ LINKROWTH_RETRIEVAL_RRF_C=60
 The lexical query is a bounded OR expression of parser-safe meaningful terms.
 RRF orders candidates; semantic-floor or lexical-match admission controls
 abstention.
+
+### Phase 4 analysis-aware pipeline
+
+```bash
+LINKROWTH_RETRIEVAL_PIPELINE=analysis_aware
+LINKROWTH_RETRIEVAL_STRATEGY=single        # operational fallback
+LINKROWTH_RETRIEVAL_EVIDENCE_MIN_SCORE=0.3
+```
+
+Candidate generation uses hybrid regardless of the fallback strategy. The
+shortlist is JSON-serializable and contains no embedding vectors. It is reused
+after HITL only while both post and index fingerprints match. Run the checked-in
+comparison with `npm run eval:retrieval -- --fixture`.
 
 ### Pre–Tier A baseline (A/B)
 
