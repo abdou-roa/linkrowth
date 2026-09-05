@@ -11,7 +11,7 @@ import {
   type QueryConstructionTier,
   type RetrievalQuery,
 } from "./queryConstruction";
-import { evaluateHits, mergeProofPoints } from "./experience/select";
+import { evaluateHits, evaluateHybridHits, mergeProofPoints } from "./experience/select";
 import {
   inspectIndex,
   loadIndex as defaultLoadIndex,
@@ -22,6 +22,7 @@ import {
   buildFts5Query,
   fuseRRF,
   DEFAULT_BM25_WEIGHTS,
+  LexicalSearchError,
 } from "./experience/store";
 import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "./experience/types";
 import type { ExperienceIndex, FusedCandidate, LexicalRankedArtifact, RankedArtifact } from "./experience/types";
@@ -244,7 +245,7 @@ export async function retrieveContext(
     params.lexicalPoolSize = lexicalPoolSize;
     params.rrfC = rrfC;
     params.bm25Weights = DEFAULT_BM25_WEIGHTS;
-    params.minScore = 0; // RRF scores are not cosine values
+    params.hybridAdmission = "semantic_floor_or_lexical_match";
   }
 
   /** Emit a trace without ever letting persistence break retrieval. */
@@ -345,6 +346,7 @@ export async function retrieveContext(
   // --- Candidate generation ---
   let rawHits: RankedArtifact[];
   let fusionById: Map<string, FusedCandidate> | undefined;
+  let fusedCandidates: FusedCandidate[] | undefined;
   let lexicalMs: number | undefined;
 
   if (strategy === "hybrid") {
@@ -359,15 +361,35 @@ export async function retrieveContext(
         const lexicalFn = options.lexicalSearch ?? rankByLexical;
         lexicalHits = lexicalFn(indexPath, fts5Query, lexicalPoolSize);
         lexicalMs = Date.now() - lexicalStart;
+        params.lexicalChannel = {
+          status: "ok",
+          query: fts5Query,
+          hitCount: lexicalHits.length,
+        };
       } catch (err) {
+        lexicalMs = Date.now() - lexicalStart;
+        const reason = err instanceof LexicalSearchError ? err.reason : "fts_error";
+        params.lexicalChannel = {
+          status: "failed",
+          query: fts5Query,
+          reason,
+          fallback: "situation_only",
+        };
         console.warn(
           "[retrieveContext] lexical search failed; continuing with situation-only candidates:",
           err instanceof Error ? err.message : err
         );
       }
+    } else {
+      params.lexicalChannel = {
+        status: "skipped",
+        reason: "empty_query",
+        fallback: "situation_only",
+      };
     }
 
     const fused = fuseRRF(semanticHits, lexicalHits, { c: rrfC });
+    fusedCandidates = fused;
     fusionById = new Map(fused.map((f) => [f.artifact.id, f]));
     rawHits = fused.map((f) => ({ score: f.rrfScore, artifact: f.artifact }));
   } else {
@@ -416,8 +438,10 @@ export async function retrieveContext(
   }
 
   // --- Selection ---
-  const effectiveMinScore = strategy === "hybrid" ? 0 : minScore;
-  const decisions = evaluateHits(rawHits, { minScore: effectiveMinScore, k });
+  const decisions =
+    strategy === "hybrid" && fusedCandidates
+      ? evaluateHybridHits(fusedCandidates, { minSemanticScore: minScore, k })
+      : evaluateHits(rawHits, { minScore, k });
   const candidates: RetrievalTraceHit[] = decisions.map((decision) => {
     const hit: RetrievalTraceHit = {
       artifactId: decision.hit.artifact.id,
@@ -438,7 +462,10 @@ export async function retrieveContext(
       const fused = fusionById.get(decision.hit.artifact.id);
       if (fused) {
         hit.rrfScore = fused.rrfScore;
-        if (fused.semanticRank !== undefined) hit.situationScore = fused.situationScore;
+        if (fused.semanticRank !== undefined) {
+          hit.semanticRank = fused.semanticRank;
+          hit.situationScore = fused.situationScore;
+        }
         if (fused.lexicalRank !== undefined) {
           hit.lexicalRank = fused.lexicalRank;
           hit.bm25Score = fused.bm25Score;

@@ -1,4 +1,4 @@
-import type { RankedArtifact } from "./types";
+import type { FusedCandidate, RankedArtifact } from "./types";
 
 const ALLOWED_SHAREABILITY = new Set(["public", "anonymized"]);
 const ALLOWED_CONFIDENCE = new Set(["high", "medium"]);
@@ -19,6 +19,32 @@ export interface HitDecision {
   dropReason?: HitDropReason;
 }
 
+function evaluateRankedHits(
+  hits: RankedArtifact[],
+  k: number,
+  passesRelevance: (hit: RankedArtifact, rank: number) => boolean
+): HitDecision[] {
+  let kept = 0;
+  return hits.map((hit, rank) => {
+    let dropReason: HitDropReason | undefined;
+    if (!ALLOWED_SHAREABILITY.has(hit.artifact.shareability)) {
+      dropReason = "shareability";
+    } else if (!ALLOWED_CONFIDENCE.has(hit.artifact.confidence)) {
+      dropReason = "confidence";
+    } else if (!passesRelevance(hit, rank)) {
+      dropReason = "min_score";
+    } else if (!hit.artifact.claimableLine?.trim()) {
+      dropReason = "empty_claim";
+    } else if (kept >= k) {
+      dropReason = "over_k";
+    }
+
+    const selected = dropReason === undefined;
+    if (selected) kept += 1;
+    return { hit, rank, selected, dropReason };
+  });
+}
+
 /**
  * Single source of truth for retrieval selection. Annotates every hit with a
  * keep/drop decision so both selection and observability read from one place.
@@ -33,24 +59,29 @@ export function evaluateHits(
   hits: RankedArtifact[],
   options: { minScore: number; k: number }
 ): HitDecision[] {
-  let kept = 0;
-  return hits.map((hit, rank) => {
-    let dropReason: HitDropReason | undefined;
-    if (!ALLOWED_SHAREABILITY.has(hit.artifact.shareability)) {
-      dropReason = "shareability";
-    } else if (!ALLOWED_CONFIDENCE.has(hit.artifact.confidence)) {
-      dropReason = "confidence";
-    } else if (hit.score < options.minScore) {
-      dropReason = "min_score";
-    } else if (!hit.artifact.claimableLine?.trim()) {
-      dropReason = "empty_claim";
-    } else if (kept >= options.k) {
-      dropReason = "over_k";
-    }
+  return evaluateRankedHits(hits, options.k, (hit) => hit.score >= options.minScore);
+}
 
-    const selected = dropReason === undefined;
-    if (selected) kept += 1;
-    return { hit, rank, selected, dropReason };
+/**
+ * Evaluate RRF candidates without comparing RRF scores to a cosine threshold.
+ * A candidate is relevant enough when the semantic channel clears its cosine
+ * floor or the lexical channel recovered it.
+ */
+export function evaluateHybridHits(
+  candidates: FusedCandidate[],
+  options: { minSemanticScore: number; k: number }
+): HitDecision[] {
+  const ranked = candidates.map((candidate) => ({
+    score: candidate.rrfScore,
+    artifact: candidate.artifact,
+  }));
+  return evaluateRankedHits(ranked, options.k, (_hit, rank) => {
+    const candidate = candidates[rank]!;
+    return (
+      candidate.lexicalRank !== undefined ||
+      (candidate.situationScore !== undefined &&
+        candidate.situationScore >= options.minSemanticScore)
+    );
   });
 }
 

@@ -508,13 +508,21 @@ describe("retrieveContext hybrid strategy", () => {
     const trace = last();
     assert.equal(trace.schemaVersion, RETRIEVAL_TRACE_SCHEMA_VERSION);
     assert.equal(trace.params.strategy, "hybrid");
-    assert.equal(trace.params.minScore, 0);
+    assert.equal(trace.params.minScore, 0.3);
     assert.equal(trace.params.rrfC, 60);
+    assert.equal(trace.params.hybridAdmission, "semantic_floor_or_lexical_match");
+    assert.deepEqual(trace.params.lexicalChannel, {
+      status: "ok",
+      query:
+        '"run" OR "durable" OR "Postgres" OR "suggestion" OR "jobs" OR "Kafka"',
+      hitCount: 1,
+    });
 
     const postgres = trace.candidates.find((c) => c.artifactId === "postgres");
     assert.ok(postgres?.selected);
     assert.ok(postgres?.rrfScore !== undefined);
     assert.ok(postgres?.situationScore !== undefined);
+    assert.equal(postgres?.semanticRank, 1);
     assert.equal(postgres?.lexicalRank, 1);
     assert.equal(postgres?.bm25Score, -5.0);
   });
@@ -544,5 +552,34 @@ describe("retrieveContext hybrid strategy", () => {
     const trace = last();
     assert.equal(trace.outcome, "injected");
     assert.equal(trace.params.strategy, "hybrid");
+    assert.deepEqual(trace.params.lexicalChannel, {
+      status: "failed",
+      query: '"run" OR "durable" OR "suggestion" OR "jobs" OR "Kafka"',
+      reason: "fts_error",
+      fallback: "situation_only",
+    });
+  });
+
+  it("abstains when hybrid has only semantic candidates below the cosine floor", async () => {
+    const { sink, last } = capturingSink();
+    const enriched = await retrieveContext(
+      { text: "Completely unrelated subject" },
+      baseContext,
+      {
+        loadIndex: () => fixtureIndex(),
+        embedQuery: async () => [-1, 0, 0],
+        lexicalSearch: () => [],
+        k: 3,
+        minScore: 0.3,
+        strategy: "hybrid",
+        traceSink: sink,
+      }
+    );
+
+    assert.deepEqual(enriched, baseContext);
+    const trace = last();
+    assert.equal(trace.outcome, "no_survivors");
+    assert.ok(trace.candidates.every((candidate) => !candidate.selected));
+    assert.ok(trace.candidates.every((candidate) => candidate.dropReason === "min_score"));
   });
 });
