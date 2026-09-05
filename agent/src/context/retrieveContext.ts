@@ -13,6 +13,7 @@ import {
 } from "./queryConstruction";
 import { evaluateHits, mergeProofPoints } from "./experience/select";
 import {
+  inspectIndex,
   loadIndex as defaultLoadIndex,
   rankBySituation,
   rankIndex,
@@ -156,6 +157,25 @@ function warnIncompatibleIndex(schemaVersion: number): boolean {
   return false;
 }
 
+function warnIndexLoadFailure(indexPath: string): void {
+  const inspection = inspectIndex(indexPath);
+  if (inspection.status === "incompatible") {
+    const found =
+      inspection.schemaVersion === null ? "an unversioned legacy index" : `schema v${inspection.schemaVersion}`;
+    console.warn(
+      `[retrieveContext] Index schema v${EXPERIENCE_INDEX_SCHEMA_VERSION} required, but ${found} was found at ${indexPath}. ` +
+        "Rebuild with npm run index (distill/). Falling back to static context."
+    );
+  } else if (inspection.status === "corrupt") {
+    console.warn(
+      `[retrieveContext] Index at ${indexPath} is corrupt or incomplete. ` +
+        "Rebuild with npm run index (distill/). Falling back to static context."
+    );
+  } else if (inspection.status === "current" && inspection.count === 0) {
+    console.warn(`[retrieveContext] Index at ${indexPath} is empty. Falling back to static context.`);
+  }
+}
+
 /**
  * Enrich UserContext with claimable proof points retrieved from the experience index.
  * Graceful: missing index, empty query, or embed failures return baseContext unchanged.
@@ -260,6 +280,7 @@ export async function retrieveContext(
   }
 
   if (!index?.items?.length) {
+    if (!options.loadIndex) warnIndexLoadFailure(indexPath);
     await emit("no_index");
     return baseContext;
   }

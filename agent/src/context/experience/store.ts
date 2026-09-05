@@ -8,9 +8,59 @@ import type {
 import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "./types";
 import { cosineSimilarity } from "./vector";
 
+export type ExperienceIndexInspection =
+  | { status: "missing" }
+  | { status: "incompatible"; schemaVersion: number | null }
+  | { status: "corrupt" }
+  | { status: "current"; count: number };
+
 function decodeVector(blob: Buffer): number[] {
   const aligned = Buffer.from(blob);
   return Array.from(new Float32Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 4));
+}
+
+/** Inspect an index that failed to load so callers can emit an actionable diagnostic. */
+export function inspectIndex(dbPath: string): ExperienceIndexInspection {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  } catch {
+    return { status: "missing" };
+  }
+
+  try {
+    const metaColumns = db.prepare("PRAGMA table_info(index_meta)").all() as Array<{
+      name: string;
+    }>;
+    if (metaColumns.length === 0) return { status: "corrupt" };
+    if (!metaColumns.some((column) => column.name === "schema_version")) {
+      return { status: "incompatible", schemaVersion: null };
+    }
+
+    const meta = db
+      .prepare("SELECT schema_version, count FROM index_meta WHERE id = 1")
+      .get() as { schema_version: number; count: number } | undefined;
+    if (!meta) return { status: "corrupt" };
+    if (meta.schema_version !== EXPERIENCE_INDEX_SCHEMA_VERSION) {
+      return { status: "incompatible", schemaVersion: meta.schema_version };
+    }
+
+    const experienceColumns = new Set(
+      (
+        db.prepare("PRAGMA table_info(experiences)").all() as Array<{
+          name: string;
+        }>
+      ).map((column) => column.name)
+    );
+    for (const required of ["vector", "situation_vector", "evidence_vector", "artifact_json"]) {
+      if (!experienceColumns.has(required)) return { status: "corrupt" };
+    }
+    return { status: "current", count: meta.count };
+  } catch {
+    return { status: "corrupt" };
+  } finally {
+    db.close();
+  }
 }
 
 /** Load a schema-v2 experience index from SQLite, or null if missing/incompatible. */
