@@ -475,3 +475,122 @@ describe("retrieveContext split strategy", () => {
     assert.equal(postgres?.evidenceScore, undefined);
   });
 });
+
+describe("retrieveContext hybrid strategy", () => {
+  it("fuses semantic + lexical ranks and records hybrid params on trace", async () => {
+    const { sink, last } = capturingSink();
+    const enriched = await retrieveContext(
+      { text: "How do you run durable Postgres suggestion jobs without Kafka?" },
+      baseContext,
+      {
+        loadIndex: () => fixtureIndex(),
+        embedQuery: async () => [1, 0, 0],
+        lexicalSearch: () => [
+          {
+            bm25Score: -5.0,
+            artifact: fixtureIndex().items[0]!.artifact,
+          },
+        ],
+        k: 3,
+        minScore: 0.3,
+        strategy: "hybrid",
+        rrfC: 60,
+        traceSink: sink,
+      }
+    );
+
+    assert.ok(
+      enriched.proofPoints?.includes(
+        "I built a Postgres-backed suggestion job queue with claim semantics."
+      )
+    );
+
+    const trace = last();
+    assert.equal(trace.schemaVersion, RETRIEVAL_TRACE_SCHEMA_VERSION);
+    assert.equal(trace.params.strategy, "hybrid");
+    assert.equal(trace.params.minScore, 0.3);
+    assert.equal(trace.params.rrfC, 60);
+    assert.equal(trace.params.hybridAdmission, "semantic_floor_or_lexical_match");
+    assert.deepEqual(trace.params.lexicalChannel, {
+      status: "ok",
+      query:
+        '"run" OR "durable" OR "Postgres" OR "suggestion" OR "jobs" OR "Kafka"',
+      hitCount: 1,
+    });
+
+    const postgres = trace.candidates.find((c) => c.artifactId === "postgres");
+    assert.ok(postgres?.selected);
+    assert.ok(postgres?.rrfScore !== undefined);
+    assert.ok(postgres?.situationScore !== undefined);
+    assert.equal(postgres?.semanticRank, 1);
+    assert.equal(postgres?.lexicalRank, 1);
+    assert.equal(postgres?.bm25Score, -5.0);
+  });
+
+  it("falls back to situation-only when lexical search throws", async () => {
+    const { sink, last } = capturingSink();
+    const enriched = await retrieveContext(
+      { text: "How do you run durable suggestion jobs without Kafka?" },
+      baseContext,
+      {
+        loadIndex: () => fixtureIndex(),
+        embedQuery: async () => [1, 0, 0],
+        lexicalSearch: () => {
+          throw new Error("FTS5 unavailable");
+        },
+        k: 3,
+        strategy: "hybrid",
+        traceSink: sink,
+      }
+    );
+
+    assert.ok(
+      enriched.proofPoints?.includes(
+        "I built a Postgres-backed suggestion job queue with claim semantics."
+      )
+    );
+    const trace = last();
+    assert.equal(trace.outcome, "injected");
+    assert.equal(trace.params.strategy, "hybrid");
+    assert.deepEqual(trace.params.lexicalChannel, {
+      status: "failed",
+      query: '"run" OR "durable" OR "suggestion" OR "jobs" OR "Kafka"',
+      reason: "fts_error",
+      fallback: "situation_only",
+    });
+  });
+
+  it("abstains when hybrid has only semantic candidates below the cosine floor", async () => {
+    const { sink, last } = capturingSink();
+    const enriched = await retrieveContext(
+      { text: "Completely unrelated subject" },
+      baseContext,
+      {
+        loadIndex: () => fixtureIndex(),
+        embedQuery: async () => [-1, 0, 0],
+        lexicalSearch: () => [],
+        k: 3,
+        minScore: 0.3,
+        strategy: "hybrid",
+        traceSink: sink,
+      }
+    );
+
+    assert.deepEqual(enriched, baseContext);
+    const trace = last();
+    assert.equal(trace.outcome, "no_survivors");
+    assert.ok(trace.candidates.every((candidate) => !candidate.selected));
+    assert.equal(
+      trace.candidates.find((candidate) => candidate.artifactId === "postgres")?.dropReason,
+      "min_score"
+    );
+    assert.equal(
+      trace.candidates.find((candidate) => candidate.artifactId === "extension")?.dropReason,
+      "min_score"
+    );
+    assert.equal(
+      trace.candidates.find((candidate) => candidate.artifactId === "private")?.dropReason,
+      "shareability"
+    );
+  });
+});

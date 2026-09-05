@@ -1,4 +1,5 @@
 import type { ExperienceArtifact } from "../types";
+import { normalizeTechnicalTerms } from "./fts";
 
 /**
  * Combined retrieval text — all semantic fields in one block.
@@ -52,6 +53,31 @@ export function evidenceText(artifact: ExperienceArtifact): string {
     .map((part) => part.trim())
     .filter(Boolean)
     .join("\n");
+}
+
+/** Column strings for the FTS5 lexical index (Phase 3). */
+export interface LexicalFields {
+  title: string;
+  domains: string;
+  stack: string;
+  problem: string;
+  approach: string;
+  paths: string;
+}
+
+/**
+ * Lexical document fields for FTS5 BM25 indexing.
+ * tradeoff and claimableLine are excluded — evidence-channel signals (Phase 4).
+ */
+export function lexicalFields(artifact: ExperienceArtifact): LexicalFields {
+  return {
+    title: normalizeTechnicalTerms(artifact.title.trim()),
+    domains: normalizeTechnicalTerms(artifact.domains.join(", ")),
+    stack: normalizeTechnicalTerms(artifact.stack.join(", ")),
+    problem: normalizeTechnicalTerms(artifact.problem.trim()),
+    approach: normalizeTechnicalTerms(artifact.approach.trim()),
+    paths: normalizeTechnicalTerms(artifact.paths.slice(0, 24).join(" ")),
+  };
 }
 
 export function cosineSimilarity(a: number[], b: number[]): number {

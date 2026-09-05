@@ -6,8 +6,17 @@ import { describe, it } from "node:test";
 import Database from "better-sqlite3";
 import type { ExperienceArtifact, ExperienceIndex, IndexedExperience } from "./types";
 import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "./types";
-import { evidenceScore, inspectIndex, loadIndex, rankBySituation, rankIndex } from "./store";
-import { cosineSimilarity, evidenceText, retrievalText, situationText } from "./vector";
+import {
+  buildFts5Query,
+  evidenceScore,
+  inspectIndex,
+  LexicalSearchError,
+  loadIndex,
+  rankByLexical,
+  rankBySituation,
+  rankIndex,
+} from "./store";
+import { cosineSimilarity, evidenceText, lexicalFields, retrievalText, situationText } from "./vector";
 
 const artifact = (
   id: string,
@@ -34,6 +43,73 @@ const artifact = (
 
 function encodeVector(vector: number[]): Buffer {
   return Buffer.from(new Float32Array(vector).buffer);
+}
+
+/** Write a v3 fixture index with FTS5 table directly to SQLite. */
+function writeFixtureIndexV3(dbPath: string, index: ExperienceIndex): void {
+  const db = new Database(dbPath);
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS index_meta (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        indexed_at TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        dimensions INTEGER NOT NULL,
+        count INTEGER NOT NULL,
+        schema_version INTEGER NOT NULL DEFAULT 3
+      );
+      CREATE TABLE IF NOT EXISTS experiences (
+        id TEXT PRIMARY KEY,
+        vector BLOB NOT NULL,
+        situation_vector BLOB NOT NULL,
+        evidence_vector BLOB NOT NULL,
+        artifact_json TEXT NOT NULL
+      );
+      CREATE VIRTUAL TABLE IF NOT EXISTS experiences_fts USING fts5(
+        id UNINDEXED,
+        title,
+        domains,
+        stack,
+        problem,
+        approach,
+        paths,
+        tokenize = 'unicode61'
+      );
+    `);
+    db.prepare(
+      `INSERT INTO index_meta (id, indexed_at, provider, model, dimensions, count, schema_version)
+       VALUES (1, @indexedAt, @provider, @model, @dimensions, @count, @schemaVersion)`
+    ).run({
+      indexedAt: index.indexedAt,
+      provider: index.embedding.provider,
+      model: index.embedding.model,
+      dimensions: index.embedding.dimensions,
+      count: index.count,
+      schemaVersion: index.schemaVersion,
+    });
+    const insert = db.prepare(
+      `INSERT INTO experiences (id, vector, situation_vector, evidence_vector, artifact_json)
+       VALUES (@id, @vector, @situationVector, @evidenceVector, @artifactJson)`
+    );
+    const insertFts = db.prepare(
+      `INSERT INTO experiences_fts (id, title, domains, stack, problem, approach, paths)
+       VALUES (@id, @title, @domains, @stack, @problem, @approach, @paths)`
+    );
+    for (const item of index.items) {
+      insert.run({
+        id: item.id,
+        vector: encodeVector(item.vector),
+        situationVector: encodeVector(item.situationVector),
+        evidenceVector: encodeVector(item.evidenceVector),
+        artifactJson: JSON.stringify(item.artifact),
+      });
+      const lex = lexicalFields(item.artifact);
+      insertFts.run({ id: item.id, ...lex });
+    }
+  } finally {
+    db.close();
+  }
 }
 
 /** Write a v2 fixture index directly to SQLite (mirrors distill's saveIndex v2 format). */
@@ -180,7 +256,7 @@ describe("vector helpers", () => {
   });
 });
 
-describe("experience index store (v2)", () => {
+describe("experience index store (v3)", () => {
   it("loads v2 index with all three vectors", () => {
     const dir = mkdtempSync(join(tmpdir(), "agent-experience-index-"));
     const dbPath = join(dir, "experience-index.db");
@@ -265,7 +341,7 @@ describe("experience index store (v2)", () => {
     assert.ok(Math.abs(evidenceScore(item, eqVector) - 1.0) < 1e-6);
   });
 
-  it("returns null for a pre-v2 index file", () => {
+  it("returns null for a pre-v3 index file", () => {
     const dir = mkdtempSync(join(tmpdir(), "agent-experience-index-v1-"));
     const dbPath = join(dir, "experience-index.db");
 
@@ -295,5 +371,73 @@ describe("experience index store (v2)", () => {
     const dbPath = join(tmpdir(), "does-not-exist-experience-index.db");
     assert.equal(loadIndex(dbPath), null);
     assert.deepEqual(inspectIndex(dbPath), { status: "missing" });
+  });
+
+  it("rankByLexical returns BM25 hits from FTS5 table", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-experience-index-fts-"));
+    const dbPath = join(dir, "experience-index.db");
+
+    try {
+      const postgres = artifact("postgres", "Postgres suggestion jobs", {
+        domains: ["postgres", "jobs"],
+        stack: ["Postgres"],
+        problem: "Need durable suggestion jobs",
+        approach: "Queued rows with claim semantics",
+      });
+      const kafka = artifact("kafka", "Kafka streams pipeline", {
+        domains: ["kafka"],
+        stack: ["Kafka"],
+        problem: "Stream processing",
+        approach: "Kafka Streams",
+      });
+
+      const index: ExperienceIndex = {
+        indexedAt: "2026-08-27T00:00:00Z",
+        schemaVersion: EXPERIENCE_INDEX_SCHEMA_VERSION,
+        embedding: { provider: "test", model: "fake", dimensions: 3 },
+        count: 2,
+        items: [
+          {
+            id: "postgres",
+            vector: [1, 0, 0],
+            situationVector: [1, 0, 0],
+            evidenceVector: [1, 0, 0],
+            artifact: postgres,
+          },
+          {
+            id: "kafka",
+            vector: [0, 1, 0],
+            situationVector: [0, 1, 0],
+            evidenceVector: [0, 1, 0],
+            artifact: kafka,
+          },
+        ],
+      };
+
+      writeFixtureIndexV3(dbPath, index);
+
+      const hits = rankByLexical(dbPath, buildFts5Query("postgres durable jobs"), 5);
+      assert.ok(hits.length >= 1);
+      assert.equal(hits[0]?.artifact.id, "postgres");
+      assert.ok(hits[0]!.bm25Score < 0, "bm25 scores are negative; lower = better");
+
+      const punctuationSafe = rankByLexical(
+        dbPath,
+        buildFts5Query("How do durable Postgres jobs work?"),
+        5
+      );
+      assert.equal(punctuationSafe[0]?.artifact.id, "postgres");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rankByLexical distinguishes database failures from zero hits", () => {
+    const dbPath = join(tmpdir(), `missing-fts-${process.pid}.db`);
+    assert.throws(
+      () => rankByLexical(dbPath, buildFts5Query("postgres"), 5),
+      (error) =>
+        error instanceof LexicalSearchError && error.reason === "db_open_failed"
+    );
   });
 });

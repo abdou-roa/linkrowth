@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExperienceArtifact, RankedArtifact } from "./types";
-import { evaluateHits, mergeProofPoints, selectClaimableHits } from "./select";
+import {
+  evaluateHits,
+  evaluateHybridHits,
+  mergeProofPoints,
+  selectClaimableHits,
+} from "./select";
 
 const artifact = (
   id: string,
@@ -118,6 +123,45 @@ describe("evaluateHits", () => {
       (h) => h.artifact.claimableLine
     );
     assert.deepEqual(fromEvaluate, fromSelect);
+  });
+});
+
+describe("evaluateHybridHits", () => {
+  it("drops weak semantic-only candidates", () => {
+    const candidate = hit(-1, "opposite semantic result");
+    const decisions = evaluateHybridHits(
+      [
+        {
+          artifact: candidate.artifact,
+          rrfScore: 1 / 61,
+          semanticRank: 1,
+          situationScore: -1,
+        },
+      ],
+      { minSemanticScore: 0.3, k: 5 }
+    );
+
+    assert.equal(decisions[0]?.selected, false);
+    assert.equal(decisions[0]?.dropReason, "min_score");
+  });
+
+  it("admits lexical matches even when their semantic score is below the floor", () => {
+    const candidate = hit(-0.5, "exact lexical recovery");
+    const decisions = evaluateHybridHits(
+      [
+        {
+          artifact: candidate.artifact,
+          rrfScore: 2 / 61,
+          semanticRank: 1,
+          lexicalRank: 1,
+          situationScore: -0.5,
+          bm25Score: -4,
+        },
+      ],
+      { minSemanticScore: 0.3, k: 5 }
+    );
+
+    assert.equal(decisions[0]?.selected, true);
   });
 });
 

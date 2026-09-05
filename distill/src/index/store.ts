@@ -5,13 +5,52 @@ import type { EmbeddingMeta, ExperienceArtifact, ExperienceIndex, IndexedExperie
 import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "../types";
 import { ensureParentDir } from "../paths";
 import { roundVector } from "../util/text";
-import { cosineSimilarity, evidenceText, retrievalText, situationText } from "./vector";
+import { cosineSimilarity, evidenceText, lexicalFields, retrievalText, situationText } from "./vector";
 
 export type EmbedFn = (texts: string[]) => Promise<number[][]>;
 
+export interface Bm25Weights {
+  title: number;
+  domains: number;
+  stack: number;
+  problem: number;
+  approach: number;
+  paths: number;
+}
+
+export const DEFAULT_BM25_WEIGHTS: Bm25Weights = {
+  title: 3.0,
+  domains: 2.0,
+  stack: 2.0,
+  problem: 2.0,
+  approach: 1.5,
+  paths: 0.5,
+};
+
+export interface LexicalRankedArtifact {
+  bm25Score: number;
+  artifact: ExperienceArtifact;
+}
+
+export type LexicalSearchFailureReason =
+  | "db_open_failed"
+  | "missing_fts_table"
+  | "fts_syntax_error"
+  | "fts_error";
+
+export class LexicalSearchError extends Error {
+  constructor(
+    readonly reason: LexicalSearchFailureReason,
+    message: string
+  ) {
+    super(message);
+    this.name = "LexicalSearchError";
+  }
+}
+
 const EMBED_BATCH = 32;
 
-/** Authoritative v2 schema written to a fresh database on every full rebuild. */
+/** Authoritative v3 schema written to a fresh database on every full rebuild. */
 const SCHEMA = `
 CREATE TABLE index_meta (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -29,6 +68,17 @@ CREATE TABLE experiences (
   situation_vector BLOB NOT NULL,
   evidence_vector BLOB NOT NULL,
   artifact_json TEXT NOT NULL
+);
+
+CREATE VIRTUAL TABLE experiences_fts USING fts5(
+  id UNINDEXED,
+  title,
+  domains,
+  stack,
+  problem,
+  approach,
+  paths,
+  tokenize = 'unicode61'
 );
 `;
 
@@ -197,6 +247,10 @@ export function inspectIndex(dbPath: string): ExperienceIndexInspection {
     for (const required of ["vector", "situation_vector", "evidence_vector", "artifact_json"]) {
       if (!experienceColumns.has(required)) return { status: "corrupt" };
     }
+    const ftsTable = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'experiences_fts'")
+      .get();
+    if (!ftsTable) return { status: "corrupt" };
     return { status: "current", count: meta.count };
   } catch {
     return { status: "corrupt" };
@@ -238,6 +292,10 @@ export function saveIndex(dbPath: string, index: ExperienceIndex): void {
         `INSERT INTO experiences (id, vector, situation_vector, evidence_vector, artifact_json)
          VALUES (@id, @vector, @situationVector, @evidenceVector, @artifactJson)`
       );
+      const insertFts = db!.prepare(
+        `INSERT INTO experiences_fts (id, title, domains, stack, problem, approach, paths)
+         VALUES (@id, @title, @domains, @stack, @problem, @approach, @paths)`
+      );
       for (const item of index.items) {
         insert.run({
           id: item.id,
@@ -246,6 +304,8 @@ export function saveIndex(dbPath: string, index: ExperienceIndex): void {
           evidenceVector: encodeVector(item.evidenceVector),
           artifactJson: JSON.stringify(item.artifact),
         });
+        const lex = lexicalFields(item.artifact);
+        insertFts.run({ id: item.id, ...lex });
       }
     });
     rebuild();
@@ -259,7 +319,7 @@ export function saveIndex(dbPath: string, index: ExperienceIndex): void {
   }
 }
 
-/** Load a schema-v2 experience index from SQLite, or null if missing/incompatible. */
+/** Load a schema-v3 experience index from SQLite, or null if missing/incompatible. */
 export function loadIndex(dbPath: string): ExperienceIndex | null {
   let db: Database.Database;
   try {
@@ -324,6 +384,69 @@ export function loadIndex(dbPath: string): ExperienceIndex | null {
   } catch {
     // Wrong schema, missing columns, or corrupt file.
     return null;
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * BM25 lexical search over the FTS5 index.
+ * bm25() returns negative values; lower (more negative) = better match.
+ */
+export function rankByLexical(
+  dbPath: string,
+  fts5Query: string,
+  k = 5,
+  weights: Bm25Weights = DEFAULT_BM25_WEIGHTS
+): LexicalRankedArtifact[] {
+  const query = fts5Query.trim();
+  if (!query || k <= 0) return [];
+
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  } catch (error) {
+    throw new LexicalSearchError(
+      "db_open_failed",
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+
+  try {
+    const rows = db
+      .prepare(
+        `SELECT f.id,
+                bm25(experiences_fts, 0, @wTitle, @wDomains, @wStack, @wProblem, @wApproach, @wPaths) AS score,
+                e.artifact_json
+         FROM experiences_fts f
+         JOIN experiences e ON e.id = f.id
+         WHERE experiences_fts MATCH @query
+         ORDER BY score
+         LIMIT @k`
+      )
+      .all({
+        query,
+        k,
+        wTitle: weights.title,
+        wDomains: weights.domains,
+        wStack: weights.stack,
+        wProblem: weights.problem,
+        wApproach: weights.approach,
+        wPaths: weights.paths,
+      }) as Array<{ id: string; score: number; artifact_json: string }>;
+
+    return rows.map((row) => ({
+      bm25Score: row.score,
+      artifact: JSON.parse(row.artifact_json) as ExperienceArtifact,
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const reason: LexicalSearchFailureReason = message.includes("no such table")
+      ? "missing_fts_table"
+      : message.includes("syntax error")
+        ? "fts_syntax_error"
+        : "fts_error";
+    throw new LexicalSearchError(reason, message);
   } finally {
     db.close();
   }

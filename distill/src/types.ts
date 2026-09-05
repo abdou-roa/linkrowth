@@ -95,7 +95,7 @@ export interface EmbeddingMeta {
 }
 
 /** Schema version written to index_meta.schema_version in the SQLite index. */
-export const EXPERIENCE_INDEX_SCHEMA_VERSION = 2;
+export const EXPERIENCE_INDEX_SCHEMA_VERSION = 3;
 
 export interface IndexedExperience {
   id: string;
