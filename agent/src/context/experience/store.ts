@@ -18,6 +18,22 @@ export type ExperienceIndexInspection =
   | { status: "corrupt" }
   | { status: "current"; count: number };
 
+export type LexicalSearchFailureReason =
+  | "db_open_failed"
+  | "missing_fts_table"
+  | "fts_syntax_error"
+  | "fts_error";
+
+export class LexicalSearchError extends Error {
+  constructor(
+    readonly reason: LexicalSearchFailureReason,
+    message: string
+  ) {
+    super(message);
+    this.name = "LexicalSearchError";
+  }
+}
+
 function decodeVector(blob: Buffer): number[] {
   const aligned = Buffer.from(blob);
   return Array.from(new Float32Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 4));
@@ -185,7 +201,7 @@ export function evidenceScore(item: IndexedExperience, evidenceQueryVector: numb
 }
 
 /**
- * BM25 lexical search over the FTS5 index. Returns [] on empty query or FTS error.
+ * BM25 lexical search over the FTS5 index.
  * bm25() returns negative values; lower (more negative) = better match.
  */
 export function rankByLexical(
@@ -194,14 +210,17 @@ export function rankByLexical(
   k = 5,
   weights: Bm25Weights = DEFAULT_BM25_WEIGHTS
 ): LexicalRankedArtifact[] {
-  const query = buildFts5Query(fts5Query);
+  const query = fts5Query.trim();
   if (!query || k <= 0) return [];
 
   let db: Database.Database;
   try {
     db = new Database(dbPath, { readonly: true, fileMustExist: true });
-  } catch {
-    return [];
+  } catch (error) {
+    throw new LexicalSearchError(
+      "db_open_failed",
+      error instanceof Error ? error.message : String(error)
+    );
   }
 
   try {
@@ -231,8 +250,14 @@ export function rankByLexical(
       bm25Score: row.score,
       artifact: JSON.parse(row.artifact_json) as ExperienceArtifact,
     }));
-  } catch {
-    return [];
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const reason: LexicalSearchFailureReason = message.includes("no such table")
+      ? "missing_fts_table"
+      : message.includes("syntax error")
+        ? "fts_syntax_error"
+        : "fts_error";
+    throw new LexicalSearchError(reason, message);
   } finally {
     db.close();
   }

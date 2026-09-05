@@ -7,8 +7,10 @@ import Database from "better-sqlite3";
 import type { ExperienceArtifact, ExperienceIndex, IndexedExperience } from "./types";
 import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "./types";
 import {
+  buildFts5Query,
   evidenceScore,
   inspectIndex,
+  LexicalSearchError,
   loadIndex,
   rankByLexical,
   rankBySituation,
@@ -414,12 +416,28 @@ describe("experience index store (v3)", () => {
 
       writeFixtureIndexV3(dbPath, index);
 
-      const hits = rankByLexical(dbPath, "postgres durable jobs", 5);
+      const hits = rankByLexical(dbPath, buildFts5Query("postgres durable jobs"), 5);
       assert.ok(hits.length >= 1);
       assert.equal(hits[0]?.artifact.id, "postgres");
       assert.ok(hits[0]!.bm25Score < 0, "bm25 scores are negative; lower = better");
+
+      const punctuationSafe = rankByLexical(
+        dbPath,
+        buildFts5Query("How do durable Postgres jobs work?"),
+        5
+      );
+      assert.equal(punctuationSafe[0]?.artifact.id, "postgres");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("rankByLexical distinguishes database failures from zero hits", () => {
+    const dbPath = join(tmpdir(), `missing-fts-${process.pid}.db`);
+    assert.throws(
+      () => rankByLexical(dbPath, buildFts5Query("postgres"), 5),
+      (error) =>
+        error instanceof LexicalSearchError && error.reason === "db_open_failed"
+    );
   });
 });

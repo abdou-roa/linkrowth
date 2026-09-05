@@ -15,6 +15,7 @@ import {
   rankIndex,
   saveIndex,
 } from "./store";
+import { buildFts5Query } from "./fts";
 import { cosineSimilarity, evidenceText, lexicalFields, retrievalText, situationText } from "./vector";
 
 const artifact = (id: string, line: string, extra: Partial<ExperienceArtifact> = {}): ExperienceArtifact => ({
@@ -187,6 +188,19 @@ describe("vector helpers", () => {
     assert.match(fields.paths, /0001\.sql/);
   });
 
+  it("lexicalFields canonicalizes punctuation-sensitive technology names", () => {
+    const fields = lexicalFields(
+      artifact("exp_technical", "C++ worker on .NET", {
+        stack: ["C++", "Node.js", "C#"],
+      })
+    );
+    assert.match(fields.title, /cplusplus/);
+    assert.match(fields.title, /dotnet/);
+    assert.match(fields.stack, /cplusplus/);
+    assert.match(fields.stack, /nodejs/);
+    assert.match(fields.stack, /csharp/);
+  });
+
   it("rankByEvidence ranks by evidenceVector, not combined vector", async () => {
     const index = await buildIndex(
       [artifact("near_evidence", "near"), artifact("far_evidence", "far")],
@@ -264,7 +278,7 @@ describe("vector helpers", () => {
       const situationHits = rankBySituation(loaded, [0, 1, 0], 1);
       assert.equal(situationHits[0]?.artifact.id, "near");
 
-      const lexicalHits = rankByLexical(dbPath, "postgres job queue", 5);
+      const lexicalHits = rankByLexical(dbPath, buildFts5Query("postgres job queue"), 5);
       assert.ok(lexicalHits.length >= 1);
       assert.equal(lexicalHits[0]?.artifact.id, "near");
     } finally {

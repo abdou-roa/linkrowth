@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExperienceArtifact } from "./types";
-import { buildFts5Query, fuseRRF } from "./fts";
+import { buildFts5Query, fuseRRF, normalizeTechnicalTerms, tokenizeFts5Terms } from "./fts";
 
 const artifact = (id: string, title: string): ExperienceArtifact => ({
   id,
@@ -22,16 +22,34 @@ const artifact = (id: string, title: string): ExperienceArtifact => ({
 });
 
 describe("buildFts5Query", () => {
-  it("strips FTS5 special characters", () => {
-    assert.equal(buildFts5Query('postgres "durable" jobs^'), "postgres durable jobs");
+  it("quotes parser-safe terms and joins them with OR", () => {
+    assert.equal(
+      buildFts5Query('How do you run postgres "durable" jobs?'),
+      '"run" OR "postgres" OR "durable" OR "jobs"'
+    );
   });
 
-  it("strips OR/AND/NOT keywords", () => {
-    assert.equal(buildFts5Query("postgres OR kafka AND NOT redis"), "postgres kafka redis");
+  it("removes query operators and stopwords", () => {
+    assert.equal(
+      buildFts5Query("postgres OR kafka AND NOT redis"),
+      '"postgres" OR "kafka" OR "redis"'
+    );
   });
 
-  it("preserves normal tech terms", () => {
-    assert.equal(buildFts5Query("redis-streams FTS5 postgres"), "redis-streams FTS5 postgres");
+  it("handles punctuation and canonicalizes technical names", () => {
+    assert.equal(
+      buildFts5Query("Can redis-streams work with C++ and Node.js?"),
+      '"redis-streams" OR "work" OR "cplusplus" OR "nodejs"'
+    );
+    assert.equal(normalizeTechnicalTerms("C# on .NET"), "csharp on dotnet");
+  });
+
+  it("deduplicates and bounds terms deterministically", () => {
+    assert.deepEqual(tokenizeFts5Terms("Postgres postgres jobs retries queues", 3), [
+      "Postgres",
+      "jobs",
+      "retries",
+    ]);
   });
 
   it("returns empty string for whitespace-only input", () => {
