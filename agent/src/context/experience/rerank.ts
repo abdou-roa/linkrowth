@@ -248,7 +248,7 @@ export async function selectForAnalysis(
 
     return {
       artifactId: entry.candidate.artifact.id,
-      score: entry.evidenceScore ?? Number.NEGATIVE_INFINITY,
+      score: entry.evidenceScore ?? -1,
       rank,
       selected,
       dropReason,

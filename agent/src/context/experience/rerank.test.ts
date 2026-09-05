@@ -162,7 +162,7 @@ describe("selectForAnalysis", () => {
     ]);
     assert.equal(result.trace.outcome, "injected");
     assert.equal(result.trace.candidates[0]?.artifactId, "high-evidence");
-    assert.equal(result.trace.candidates[0]?.signals?.exactOverlapCount, 1);
+    assert.equal(result.trace.candidates[0]?.signals?.exactOverlapCount, 2);
     assert.match(result.trace.query.evidenceText ?? "", /Postgres/);
     assert.equal(
       (result.trace.params.evidenceQueryProvenance as {

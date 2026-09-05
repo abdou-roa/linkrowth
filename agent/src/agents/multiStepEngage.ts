@@ -44,7 +44,18 @@ function finalizeResult(state: EngageState): EngageResult {
 }
 
 export class MultiStepEngageAgent implements Agent {
-  constructor(private readonly deps: AgentDependencies) {}
+  constructor(
+    private readonly deps: AgentDependencies,
+    private readonly workflow: {
+      analyzer: Step;
+      drafter: Step;
+      refiner: Step;
+    } = {
+      analyzer: analyzerStep,
+      drafter: drafterStep,
+      refiner: refinerStep,
+    }
+  ) {}
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
     // 1. Initialize state scoped strictly to this execution run
@@ -55,7 +66,7 @@ export class MultiStepEngageAgent implements Agent {
       Boolean(input.analysis) && input.clarification?.status === "answered";
 
     if (!resumingWithAnswer) {
-      state = await this.executeStep(analyzerStep, state);
+      state = await this.executeStep(this.workflow.analyzer, state);
 
       // HITL gate: stop before drafting until the user answers
       if (needsClarification(state.clarification)) {
@@ -73,8 +84,10 @@ export class MultiStepEngageAgent implements Agent {
 
     // 3. Synchronize analysis-aware context only after the HITL gate.
     if (input.prepareContext) {
-      if (!state.analysis) {
-        throw new Error("Context preparation requires completed analysis");
+      if (!state.analysis || !state.context) {
+        throw new Error(
+          "Context preparation requires completed analysis and context"
+        );
       }
       state = {
         ...state,
@@ -88,11 +101,11 @@ export class MultiStepEngageAgent implements Agent {
     }
 
     // 4. Draft initial comment from the analysis (+ answered clarification)
-    state = await this.executeStep(drafterStep, state);
+    state = await this.executeStep(this.workflow.drafter, state);
 
     // 5. Refine ↔ redraft until approved or attempts are exhausted
     while (state.attempts <= MAX_REFINE_ATTEMPTS) {
-      state = await this.executeStep(refinerStep, state);
+      state = await this.executeStep(this.workflow.refiner, state);
 
       if (state.isApproved || state.status === "ready_for_review") {
         break;
@@ -101,7 +114,7 @@ export class MultiStepEngageAgent implements Agent {
       // Rejected: bump attempt and redraft with updated feedbackHistory
       state.attempts += 1;
       if (state.attempts <= MAX_REFINE_ATTEMPTS) {
-        state = await this.executeStep(drafterStep, state);
+        state = await this.executeStep(this.workflow.drafter, state);
       }
     }
 

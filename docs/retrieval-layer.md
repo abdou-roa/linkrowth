@@ -32,6 +32,22 @@ ONLINE (agent/)
 
 The engage core (`engage(post, context)`) never touches embeddings. Retrieval is a **context enrichment layer** wired in at `runEngage` time.
 
+With `LINKROWTH_RETRIEVAL_PIPELINE=analysis_aware`, `runEngage` generates a
+serializable Phase 3 hybrid shortlist before analysis but does not inject any
+proof points. After analyzer/HITL completes, it validates the post and index
+fingerprints, embeds the analysis-derived evidence query, and orders accepted
+candidates lexicographically by evidence cosine, exact domain/stack overlap,
+RRF score, and artifact ID. A pending clarification checkpoints the shortlist
+and returns before this stage. Resume reuses a matching shortlist or
+regenerates a stale one and includes the authoritative answer as relevance
+intent.
+
+Analysis-aware selection explicitly abstains when no candidate passes both
+generation relevance and `LINKROWTH_RETRIEVAL_EVIDENCE_MIN_SCORE`. Any
+candidate-generation, evidence-embedding, or reranking failure uses the
+configured legacy strategy before drafting. The pipeline flag defaults to
+`legacy`.
+
 ---
 
 ## Package boundaries
@@ -449,6 +465,8 @@ Full parameter reference (env vars, overrides, filters, examples):
 | `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` | `k * 4` | Situation-channel pool for split/hybrid |
 | `LINKROWTH_RETRIEVAL_LEXICAL_POOL` | `k * 4` | BM25 pool for hybrid |
 | `LINKROWTH_RETRIEVAL_RRF_C` | `60` | Reciprocal Rank Fusion constant |
+| `LINKROWTH_RETRIEVAL_PIPELINE` | `legacy` | `legacy` or `analysis_aware`; controls post-analysis Phase 4 selection |
+| `LINKROWTH_RETRIEVAL_EVIDENCE_MIN_SCORE` | `0.3` | Provisional evidence-cosine floor used only in analysis-aware mode |
 | `SEARCH_K` | `5` | Top hits for `npm run search` (distill CLI) |
 
 Also required: the matching provider API key (`OPENAI_API_KEY` or `GEMINI_API_KEY`).
