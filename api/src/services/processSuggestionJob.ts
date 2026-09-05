@@ -86,14 +86,10 @@ export async function continueSuggestionJobAfterClarification(
   resumed: ResumedSuggestionJob,
   answer: string
 ): Promise<void> {
-  const outcome = await runEngageWithStatus(toAgentPost(resumed.post), {
-    jobId: resumed.jobId,
-    skipClaim: true,
-    clarification: toAnsweredClarification(resumed.clarification, answer),
-    // Analysis was validated when the job was paused for clarification.
-    analysis: resumed.checkpoint.analysis as never,
-    retrievalShortlist: resumed.checkpoint.retrievalShortlist as never,
-  });
+  const outcome = await runEngageWithStatus(
+    toAgentPost(resumed.post),
+    buildClarificationResumeOptions(resumed, answer)
+  );
 
   if (outcome.kind === "awaiting_clarification") {
     console.log(
@@ -102,4 +98,18 @@ export async function continueSuggestionJobAfterClarification(
       outcome.clarification.question
     );
   }
+}
+
+export function buildClarificationResumeOptions(
+  resumed: ResumedSuggestionJob,
+  answer: string
+) {
+  return {
+    jobId: resumed.jobId,
+    skipClaim: true,
+    clarification: toAnsweredClarification(resumed.clarification, answer),
+    // Analysis was validated when the job was paused for clarification.
+    analysis: resumed.checkpoint.analysis as never,
+    retrievalShortlist: resumed.checkpoint.retrievalShortlist as never,
+  };
 }

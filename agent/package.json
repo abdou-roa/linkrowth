@@ -32,7 +32,7 @@
     "dev": "tsx src/cli.ts engage",
     "eval": "tsx evals/runEvaluation.ts",
     "eval:retrieval": "tsx src/context/retrievalEvalCli.ts",
-    "test": "tsx --test src/agents/*.test.ts src/context/experience/*.test.ts src/context/*.test.ts src/persistence/retrievalTrace/*.test.ts"
+    "test": "tsx --test src/agents/*.test.ts src/context/experience/*.test.ts src/context/*.test.ts src/persistence/*.test.ts src/persistence/retrievalTrace/*.test.ts"
   },
   "dependencies": {
     "@linkrowth/db": "file:../db",

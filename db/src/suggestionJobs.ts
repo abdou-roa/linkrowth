@@ -193,13 +193,19 @@ export async function pauseSuggestionJobForClarification(
     [
       jobId,
       JSON.stringify(checkpoint.clarification),
-      JSON.stringify({
-        analysis: checkpoint.analysis,
-        steps: checkpoint.steps,
-        retrievalShortlist: checkpoint.retrievalShortlist,
-      }),
+      serializeClarificationCheckpoint(checkpoint),
     ]
   );
+}
+
+export function serializeClarificationCheckpoint(
+  checkpoint: ClarificationCheckpointInput
+): string {
+  return JSON.stringify({
+    analysis: checkpoint.analysis,
+    steps: checkpoint.steps,
+    retrievalShortlist: checkpoint.retrievalShortlist,
+  });
 }
 
 export async function resumeSuggestionJobWithAnswer(

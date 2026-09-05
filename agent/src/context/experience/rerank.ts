@@ -126,10 +126,11 @@ export function compareAnalysisAwareCandidates(
   left: Pick<ScoredCandidate, "candidate" | "evidenceScore" | "exactOverlapTerms">,
   right: Pick<ScoredCandidate, "candidate" | "evidenceScore" | "exactOverlapTerms">
 ): number {
-  const evidenceDelta =
-    (right.evidenceScore ?? Number.NEGATIVE_INFINITY) -
-    (left.evidenceScore ?? Number.NEGATIVE_INFINITY);
-  if (evidenceDelta !== 0) return evidenceDelta;
+  const leftEvidence =
+    left.evidenceScore ?? Number.NEGATIVE_INFINITY;
+  const rightEvidence =
+    right.evidenceScore ?? Number.NEGATIVE_INFINITY;
+  if (leftEvidence !== rightEvidence) return rightEvidence - leftEvidence;
 
   const overlapDelta =
     right.exactOverlapTerms.length - left.exactOverlapTerms.length;
@@ -197,7 +198,9 @@ export async function selectForAnalysis(
   const k = options.k ?? envInt("LINKROWTH_RETRIEVAL_K", 5);
   const minSituationScore =
     options.minSituationScore ??
-    envFloat("LINKROWTH_RETRIEVAL_MIN_SCORE", 0.3);
+    (typeof shortlist.params.minScore === "number"
+      ? shortlist.params.minScore
+      : envFloat("LINKROWTH_RETRIEVAL_MIN_SCORE", 0.3));
   const minEvidenceScore =
     options.minEvidenceScore ??
     envFloat("LINKROWTH_RETRIEVAL_EVIDENCE_MIN_SCORE", 0.3);
@@ -309,6 +312,15 @@ export async function selectForAnalysis(
       ordering:
         "evidence_score,exact_overlap_count,rrf_score,artifact_id",
       evidenceQueryProvenance: evidence.provenance,
+      intentProvenance: {
+        postBody: true,
+        authorHeadline: Boolean(shortlist.query.headline),
+        analysis: true,
+        clarification:
+          clarification?.status === "answered" && clarification.answer.trim()
+            ? "answered"
+            : "none",
+      },
       ...(abstentionReason ? { abstentionReason } : {}),
     },
     candidates: hits,
