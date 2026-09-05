@@ -317,7 +317,8 @@ export async function selectForAnalysis(
         authorHeadline: Boolean(shortlist.query.headline),
         analysis: true,
         clarification:
-          clarification?.status === "answered" && clarification.answer.trim()
+          clarification?.status === "answered" &&
+          clarification.answer?.trim()
             ? "answered"
             : "none",
       },
