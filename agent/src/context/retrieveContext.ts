@@ -3,8 +3,23 @@ import { getActiveProviderConfig } from "../config/llm";
 import { embedQuery as defaultEmbedQuery } from "../llm";
 import { getAgentRoot } from "../paths";
 import type { Post, UserContext } from "../core/types";
+import type { AnalysisArtifact } from "../steps/types";
+import {
+  buildRetrievalQuery,
+  buildEvidenceQuery,
+  type BuildRetrievalQueryOptions,
+  type QueryConstructionTier,
+  type RetrievalQuery,
+} from "./queryConstruction";
 import { evaluateHits, mergeProofPoints } from "./experience/select";
-import { loadIndex as defaultLoadIndex, rankIndex } from "./experience/store";
+import {
+  inspectIndex,
+  loadIndex as defaultLoadIndex,
+  rankBySituation,
+  rankIndex,
+  evidenceScore as computeEvidenceScore,
+} from "./experience/store";
+import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "./experience/types";
 import type { ExperienceIndex, RankedArtifact } from "./experience/types";
 import {
   RETRIEVAL_TRACE_SCHEMA_VERSION,
@@ -21,6 +36,22 @@ import type {
 export type EmbedQueryFn = (text: string) => Promise<number[]>;
 export type LoadIndexFn = (dbPath: string) => ExperienceIndex | null;
 
+/** Which retrieval representation to use. `single` = current baseline; `split` = Phase 2. */
+export type RetrievalStrategy = "single" | "split";
+
+export const DEFAULT_RETRIEVAL_STRATEGY: RetrievalStrategy = "single";
+
+export function parseRetrievalStrategy(raw: string | undefined): RetrievalStrategy {
+  const value = raw?.trim().toLowerCase();
+  if (value === "split" || value === "2") return "split";
+  return DEFAULT_RETRIEVAL_STRATEGY;
+}
+
+export function resolveRetrievalStrategy(override?: RetrievalStrategy): RetrievalStrategy {
+  if (override) return override;
+  return parseRetrievalStrategy(process.env.LINKROWTH_RETRIEVAL_STRATEGY);
+}
+
 export interface RetrieveContextOptions {
   /** Override path to experience-index.db. Defaults to LINKROWTH_EXPERIENCE_INDEX_DB or distill/data/. */
   indexPath?: string;
@@ -34,6 +65,26 @@ export interface RetrieveContextOptions {
   minScore?: number;
   /** Where to emit the retrieval trace. Defaults to a no-op sink. */
   traceSink?: RetrievalTraceSink;
+  /** Override query construction (`raw` baseline vs Tier A). */
+  queryConstruction?: QueryConstructionTier;
+  /**
+   * Override retrieval strategy (`single` baseline vs `split` Phase 2).
+   * Defaults to LINKROWTH_RETRIEVAL_STRATEGY or `single`.
+   */
+  strategy?: RetrievalStrategy;
+  /**
+   * Completed analysis for evidence-score annotation (split strategy, Phase 2).
+   * Not used to gate selection — evidence scores are recorded in the trace only.
+   * In production today, analysis runs after retrieval, so this is undefined.
+   * Pass it in tests/eval harness to measure evidence-channel quality offline.
+   */
+  analysis?: AnalysisArtifact;
+  /**
+   * Candidate pool size for the split strategy (situation-channel recall pool
+   * before eligibility + k cap). Defaults to LINKROWTH_RETRIEVAL_CANDIDATE_POOL
+   * or k * 4.
+   */
+  candidatePoolSize?: number;
 }
 
 function toIndexMeta(index: ExperienceIndex): RetrievalIndexMeta {
@@ -43,11 +94,13 @@ function toIndexMeta(index: ExperienceIndex): RetrievalIndexMeta {
     dimensions: index.embedding.dimensions,
     indexedAt: index.indexedAt,
     count: index.count,
+    schemaVersion: index.schemaVersion,
   };
 }
 
 const DEFAULT_K = 5;
 const DEFAULT_MIN_SCORE = 0.3;
+const DEFAULT_CANDIDATE_POOL_MULTIPLIER = 4;
 
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name]?.trim();
@@ -70,13 +123,13 @@ export function defaultExperienceIndexPath(): string {
   return join(getAgentRoot(), "..", "distill", "data", "experience-index.db");
 }
 
-/** Query text for phase-1 retrieval: author headline (if any) + post body. */
-export function buildRetrievalQuery(post: Post): string {
-  const headline = post.author?.headline?.trim();
-  const body = post.text.trim();
-  if (headline && body) return `Author headline: ${headline}\n\n${body}`;
-  return body || headline || "";
-}
+export {
+  buildRetrievalQuery,
+  buildEvidenceQuery,
+  type BuildRetrievalQueryOptions,
+  type QueryConstructionTier,
+  type RetrievalQuery,
+};
 
 function warnProviderMismatch(index: ExperienceIndex): void {
   try {
@@ -92,9 +145,44 @@ function warnProviderMismatch(index: ExperienceIndex): void {
   }
 }
 
+function warnIncompatibleIndex(schemaVersion: number): boolean {
+  if (schemaVersion !== EXPERIENCE_INDEX_SCHEMA_VERSION) {
+    console.warn(
+      `[retrieveContext] Index schema v${EXPERIENCE_INDEX_SCHEMA_VERSION} required, ` +
+        `but the loaded index is v${schemaVersion}. ` +
+        `Rebuild with npm run index (distill/). Falling back to static context.`
+    );
+    return true;
+  }
+  return false;
+}
+
+function warnIndexLoadFailure(indexPath: string): void {
+  const inspection = inspectIndex(indexPath);
+  if (inspection.status === "incompatible") {
+    const found =
+      inspection.schemaVersion === null ? "an unversioned legacy index" : `schema v${inspection.schemaVersion}`;
+    console.warn(
+      `[retrieveContext] Index schema v${EXPERIENCE_INDEX_SCHEMA_VERSION} required, but ${found} was found at ${indexPath}. ` +
+        "Rebuild with npm run index (distill/). Falling back to static context."
+    );
+  } else if (inspection.status === "corrupt") {
+    console.warn(
+      `[retrieveContext] Index at ${indexPath} is corrupt or incomplete. ` +
+        "Rebuild with npm run index (distill/). Falling back to static context."
+    );
+  } else if (inspection.status === "current" && inspection.count === 0) {
+    console.warn(`[retrieveContext] Index at ${indexPath} is empty. Falling back to static context.`);
+  }
+}
+
 /**
  * Enrich UserContext with claimable proof points retrieved from the experience index.
  * Graceful: missing index, empty query, or embed failures return baseContext unchanged.
+ *
+ * Strategy `single` (default): unchanged cosine baseline over the combined vector.
+ * Strategy `split`: rank by situation cosine; annotate traces with evidence scores.
+ * Production selection is unchanged in Phase 2 — only trace data differs.
  */
 export async function retrieveContext(
   post: Post,
@@ -106,9 +194,29 @@ export async function retrieveContext(
   const k = options.k ?? envInt("LINKROWTH_RETRIEVAL_K", DEFAULT_K);
   const minScore =
     options.minScore ?? envFloat("LINKROWTH_RETRIEVAL_MIN_SCORE", DEFAULT_MIN_SCORE);
-  const params: Record<string, unknown> = { k, minScore };
+  const strategy = resolveRetrievalStrategy(options.strategy);
+  const candidatePoolSize =
+    options.candidatePoolSize ??
+    envInt("LINKROWTH_RETRIEVAL_CANDIDATE_POOL", k * DEFAULT_CANDIDATE_POOL_MULTIPLIER);
 
-  const query = buildRetrievalQuery(post);
+  const constructed = buildRetrievalQuery(post, {
+    tier: options.queryConstruction,
+  });
+  const query = constructed.situationQuery;
+  const params: Record<string, unknown> = {
+    k,
+    minScore,
+    strategy,
+    queryConstruction: {
+      tier: constructed.tier,
+      fallback: constructed.fallback,
+      rawLength: constructed.rawLength,
+      constructedLength: constructed.constructedLength,
+    },
+  };
+  if (strategy === "split") {
+    params.candidatePoolSize = candidatePoolSize;
+  }
 
   /** Emit a trace without ever letting persistence break retrieval. */
   const emit = async (
@@ -118,17 +226,27 @@ export async function retrieveContext(
       candidates?: RetrievalTraceHit[];
       injectedProofPoints?: string[];
       embedMs?: number;
+      evidenceEmbedMs?: number;
+      evidenceQueryText?: string;
     } = {}
   ): Promise<void> => {
     const trace: RetrievalTrace = {
       schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
       outcome,
-      query: { text: query },
+      query: {
+        text: query,
+        headline: constructed.headline || undefined,
+        ...(extra.evidenceQueryText ? { evidenceText: extra.evidenceQueryText } : {}),
+      },
       index: extra.index ?? null,
       params,
       candidates: extra.candidates ?? [],
       injectedProofPoints: extra.injectedProofPoints ?? [],
-      timings: { embedMs: extra.embedMs, totalMs: Date.now() - startedAt },
+      timings: {
+        embedMs: extra.embedMs,
+        evidenceEmbedMs: extra.evidenceEmbedMs,
+        totalMs: Date.now() - startedAt,
+      },
     };
     try {
       await traceSink.record(trace);
@@ -147,7 +265,7 @@ export async function retrieveContext(
 
   const indexPath = options.indexPath ?? defaultExperienceIndexPath();
   const loadIndex = options.loadIndex ?? defaultLoadIndex;
-  const embedQuery = options.embedQuery ?? defaultEmbedQuery;
+  const embedQueryFn = options.embedQuery ?? defaultEmbedQuery;
 
   let index: ExperienceIndex | null;
   try {
@@ -162,6 +280,7 @@ export async function retrieveContext(
   }
 
   if (!index?.items?.length) {
+    if (!options.loadIndex) warnIndexLoadFailure(indexPath);
     await emit("no_index");
     return baseContext;
   }
@@ -173,10 +292,15 @@ export async function retrieveContext(
     warnProviderMismatch(index);
   }
 
+  if (warnIncompatibleIndex(index.schemaVersion)) {
+    await emit("no_index", { index: indexMeta });
+    return baseContext;
+  }
+
   const embedStartedAt = Date.now();
   let queryVector: number[];
   try {
-    queryVector = await embedQuery(query);
+    queryVector = await embedQueryFn(query);
   } catch (err) {
     console.warn(
       "[retrieveContext] embedQuery failed; continuing without retrieved proof points:",
@@ -187,21 +311,83 @@ export async function retrieveContext(
   }
   const embedMs = Date.now() - embedStartedAt;
 
-  // Over-fetch before filters so k survivors remain after shareability/confidence/score cuts.
-  const rawHits: RankedArtifact[] = rankIndex(index, queryVector, Math.max(k * 3, k));
+  // --- Candidate generation ---
+  // single: rank by combined vector (baseline).
+  // split:  rank by situation vector only with wider pool.
+  const poolSize = strategy === "split" ? Math.max(candidatePoolSize, k) : Math.max(k * 3, k);
+  const rawHits: RankedArtifact[] =
+    strategy === "split"
+      ? rankBySituation(index, queryVector, poolSize)
+      : rankIndex(index, queryVector, poolSize);
+
+  // --- Evidence scoring (split strategy, Phase 2) ---
+  // Compute evidence cosine for every candidate and annotate the trace.
+  // Not used to gate or reorder selection in Phase 2.
+  let evidenceEmbedMs: number | undefined;
+  let evidenceQueryText: string | undefined;
+  let evidenceVectors: Map<string, number> | undefined;
+
+  if (strategy === "split") {
+    if (options.analysis) {
+      const eq = buildEvidenceQuery(options.analysis);
+      evidenceQueryText = eq.evidenceQuery || undefined;
+
+      if (evidenceQueryText) {
+        const evidenceEmbedStart = Date.now();
+        try {
+          const eqVector = await embedQueryFn(evidenceQueryText);
+          evidenceEmbedMs = Date.now() - evidenceEmbedStart;
+          evidenceVectors = new Map<string, number>();
+
+          // Find the IndexedExperience for each raw hit to compute evidence cosine.
+          const itemById = new Map(index.items.map((item) => [item.id, item]));
+          for (const hit of rawHits) {
+            const item = itemById.get(hit.artifact.id);
+            if (item) {
+              evidenceVectors.set(hit.artifact.id, computeEvidenceScore(item, eqVector));
+            }
+          }
+        } catch (err) {
+          console.warn(
+            "[retrieveContext] evidence embedQuery failed (ignored — annotation only):",
+            err instanceof Error ? err.message : err
+          );
+        }
+      }
+    }
+  }
+
+  // --- Selection (unchanged in Phase 2) ---
   const decisions = evaluateHits(rawHits, { minScore, k });
-  const candidates: RetrievalTraceHit[] = decisions.map((decision) => ({
-    artifactId: decision.hit.artifact.id,
-    score: decision.hit.score,
-    rank: decision.rank,
-    selected: decision.selected,
-    dropReason: decision.dropReason,
-    claimableLine: decision.hit.artifact.claimableLine,
-  }));
+  const candidates: RetrievalTraceHit[] = decisions.map((decision) => {
+    const hit: RetrievalTraceHit = {
+      artifactId: decision.hit.artifact.id,
+      score: decision.hit.score,
+      rank: decision.rank,
+      selected: decision.selected,
+      dropReason: decision.dropReason,
+      claimableLine: decision.hit.artifact.claimableLine,
+    };
+    if (strategy === "split") {
+      hit.situationScore = decision.hit.score;
+      if (evidenceVectors) {
+        const es = evidenceVectors.get(decision.hit.artifact.id);
+        if (es !== undefined) hit.evidenceScore = es;
+      }
+    }
+    return hit;
+  });
+
   const selected = decisions.filter((decision) => decision.selected).map((d) => d.hit);
 
   if (selected.length === 0) {
-    await emit("no_survivors", { index: indexMeta, candidates, embedMs });
+    await emit("no_survivors", {
+      index: indexMeta,
+      candidates,
+      embedMs,
+      evidenceEmbedMs,
+      evidenceQueryText,
+    });
     return baseContext;
   }
 
@@ -213,6 +399,8 @@ export async function retrieveContext(
     candidates,
     injectedProofPoints: claimableLines,
     embedMs,
+    evidenceEmbedMs,
+    evidenceQueryText,
   });
 
   return {

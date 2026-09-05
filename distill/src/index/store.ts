@@ -1,30 +1,54 @@
 import Database from "better-sqlite3";
+import { randomUUID } from "node:crypto";
+import { renameSync, rmSync } from "node:fs";
 import type { EmbeddingMeta, ExperienceArtifact, ExperienceIndex, IndexedExperience } from "../types";
+import { EXPERIENCE_INDEX_SCHEMA_VERSION } from "../types";
 import { ensureParentDir } from "../paths";
 import { roundVector } from "../util/text";
-import { cosineSimilarity, retrievalText } from "./vector";
+import { cosineSimilarity, evidenceText, retrievalText, situationText } from "./vector";
 
 export type EmbedFn = (texts: string[]) => Promise<number[][]>;
 
 const EMBED_BATCH = 32;
 
+/** Authoritative v2 schema written to a fresh database on every full rebuild. */
 const SCHEMA = `
-CREATE TABLE IF NOT EXISTS index_meta (
+CREATE TABLE index_meta (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   indexed_at TEXT NOT NULL,
   provider TEXT NOT NULL,
   model TEXT NOT NULL,
   dimensions INTEGER NOT NULL,
-  count INTEGER NOT NULL
+  count INTEGER NOT NULL,
+  schema_version INTEGER NOT NULL DEFAULT ${EXPERIENCE_INDEX_SCHEMA_VERSION}
 );
 
-CREATE TABLE IF NOT EXISTS experiences (
+CREATE TABLE experiences (
   id TEXT PRIMARY KEY,
   vector BLOB NOT NULL,
+  situation_vector BLOB NOT NULL,
+  evidence_vector BLOB NOT NULL,
   artifact_json TEXT NOT NULL
 );
 `;
 
+export interface RankedArtifact {
+  score: number;
+  artifact: ExperienceArtifact;
+}
+
+export type ExperienceIndexInspection =
+  | { status: "missing" }
+  | { status: "incompatible"; schemaVersion: number | null }
+  | { status: "corrupt" }
+  | { status: "current"; count: number };
+
+/**
+ * Build the in-memory index by embedding three text representations per
+ * artifact in a single interleaved batch:
+ *   [combined₀, situation₀, evidence₀, combined₁, situation₁, evidence₁, …]
+ * This halves round-trips compared to three sequential embed calls.
+ */
 export async function buildIndex(
   artifacts: ExperienceArtifact[],
   embed: EmbedFn,
@@ -34,20 +58,34 @@ export async function buildIndex(
 
   for (let i = 0; i < artifacts.length; i += EMBED_BATCH) {
     const batch = artifacts.slice(i, i + EMBED_BATCH);
-    const texts = batch.map(retrievalText);
-    const vectors = await embed(texts);
-    if (vectors.length !== batch.length) {
-      throw new Error(`embed: expected ${batch.length} vectors, got ${vectors.length}`);
+
+    // Interleave: [combined0, situation0, evidence0, combined1, …]
+    const texts: string[] = [];
+    for (const artifact of batch) {
+      texts.push(retrievalText(artifact));
+      texts.push(situationText(artifact));
+      texts.push(evidenceText(artifact));
     }
+
+    const vectors = await embed(texts);
+    if (vectors.length !== texts.length) {
+      throw new Error(`embed: expected ${texts.length} vectors, got ${vectors.length}`);
+    }
+
     for (let j = 0; j < batch.length; j++) {
       const artifact = batch[j]!;
-      const vector = vectors[j];
-      if (!vector?.length) {
+      const base = j * 3;
+      const vector = vectors[base];
+      const sVector = vectors[base + 1];
+      const eVector = vectors[base + 2];
+      if (!vector?.length || !sVector?.length || !eVector?.length) {
         throw new Error(`embed: empty vector for ${artifact.id}`);
       }
       items.push({
         id: artifact.id,
         vector: roundVector(vector),
+        situationVector: roundVector(sVector),
+        evidenceVector: roundVector(eVector),
         artifact,
       });
     }
@@ -57,15 +95,11 @@ export async function buildIndex(
 
   return {
     indexedAt: new Date().toISOString(),
+    schemaVersion: EXPERIENCE_INDEX_SCHEMA_VERSION,
     embedding: { ...meta, dimensions: dimensions || meta.dimensions },
     count: items.length,
     items,
   };
-}
-
-export interface RankedArtifact {
-  score: number;
-  artifact: ExperienceArtifact;
 }
 
 export function rankIndex(
@@ -84,6 +118,40 @@ export function rankIndex(
     .slice(0, k);
 }
 
+/** Rank by situation cosine only — high-recall candidate generation for the split strategy. */
+export function rankBySituation(
+  index: ExperienceIndex,
+  queryVector: number[],
+  k = 5
+): RankedArtifact[] {
+  if (k <= 0 || index.items.length === 0) return [];
+
+  return index.items
+    .map((item) => ({
+      score: cosineSimilarity(queryVector, item.situationVector),
+      artifact: item.artifact,
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, k);
+}
+
+/** Rank by evidence cosine for offline inspection and evaluation. */
+export function rankByEvidence(
+  index: ExperienceIndex,
+  queryVector: number[],
+  k = 5
+): RankedArtifact[] {
+  if (k <= 0 || index.items.length === 0) return [];
+
+  return index.items
+    .map((item) => ({
+      score: cosineSimilarity(queryVector, item.evidenceVector),
+      artifact: item.artifact,
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, k);
+}
+
 function encodeVector(vector: number[]): Buffer {
   return Buffer.from(new Float32Array(vector).buffer);
 }
@@ -93,45 +161,105 @@ function decodeVector(blob: Buffer): number[] {
   return Array.from(new Float32Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 4));
 }
 
-/** Replace the local SQLite index with a full rebuild. */
+/** Inspect index schema state without mutating the database. */
+export function inspectIndex(dbPath: string): ExperienceIndexInspection {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  } catch {
+    return { status: "missing" };
+  }
+
+  try {
+    const metaColumns = db.prepare("PRAGMA table_info(index_meta)").all() as Array<{
+      name: string;
+    }>;
+    if (metaColumns.length === 0) return { status: "corrupt" };
+    if (!metaColumns.some((column) => column.name === "schema_version")) {
+      return { status: "incompatible", schemaVersion: null };
+    }
+
+    const meta = db
+      .prepare("SELECT schema_version, count FROM index_meta WHERE id = 1")
+      .get() as { schema_version: number; count: number } | undefined;
+    if (!meta) return { status: "corrupt" };
+    if (meta.schema_version !== EXPERIENCE_INDEX_SCHEMA_VERSION) {
+      return { status: "incompatible", schemaVersion: meta.schema_version };
+    }
+
+    const experienceColumns = new Set(
+      (
+        db.prepare("PRAGMA table_info(experiences)").all() as Array<{
+          name: string;
+        }>
+      ).map((column) => column.name)
+    );
+    for (const required of ["vector", "situation_vector", "evidence_vector", "artifact_json"]) {
+      if (!experienceColumns.has(required)) return { status: "corrupt" };
+    }
+    return { status: "current", count: meta.count };
+  } catch {
+    return { status: "corrupt" };
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Replace the local SQLite index atomically.
+ *
+ * The complete rebuild is committed to a sibling temporary database before it
+ * replaces the live file, so an insert or schema failure preserves the last
+ * valid index.
+ */
 export function saveIndex(dbPath: string, index: ExperienceIndex): void {
   ensureParentDir(dbPath);
-  const db = new Database(dbPath);
-  try {
-    db.exec(SCHEMA);
-    const replace = db.transaction(() => {
-      db.prepare("DELETE FROM experiences").run();
-      db.prepare("DELETE FROM index_meta").run();
+  const tempPath = `${dbPath}.${process.pid}.${randomUUID()}.tmp`;
+  let db: Database.Database | undefined;
 
-      db.prepare(
-        `INSERT INTO index_meta (id, indexed_at, provider, model, dimensions, count)
-         VALUES (1, @indexedAt, @provider, @model, @dimensions, @count)`
+  try {
+    db = new Database(tempPath);
+    const rebuild = db.transaction(() => {
+      db!.exec(SCHEMA);
+
+      db!.prepare(
+        `INSERT INTO index_meta (id, indexed_at, provider, model, dimensions, count, schema_version)
+         VALUES (1, @indexedAt, @provider, @model, @dimensions, @count, @schemaVersion)`
       ).run({
         indexedAt: index.indexedAt,
         provider: index.embedding.provider,
         model: index.embedding.model,
         dimensions: index.embedding.dimensions,
         count: index.count,
+        schemaVersion: index.schemaVersion,
       });
 
-      const insert = db.prepare(
-        `INSERT INTO experiences (id, vector, artifact_json) VALUES (@id, @vector, @artifactJson)`
+      const insert = db!.prepare(
+        `INSERT INTO experiences (id, vector, situation_vector, evidence_vector, artifact_json)
+         VALUES (@id, @vector, @situationVector, @evidenceVector, @artifactJson)`
       );
       for (const item of index.items) {
         insert.run({
           id: item.id,
           vector: encodeVector(item.vector),
+          situationVector: encodeVector(item.situationVector),
+          evidenceVector: encodeVector(item.evidenceVector),
           artifactJson: JSON.stringify(item.artifact),
         });
       }
     });
-    replace();
-  } finally {
+    rebuild();
     db.close();
+    db = undefined;
+    renameSync(tempPath, dbPath);
+  } catch (error) {
+    db?.close();
+    rmSync(tempPath, { force: true });
+    throw error;
   }
 }
 
-/** Load the experience index from a local SQLite file, or null if missing/empty. */
+/** Load a schema-v2 experience index from SQLite, or null if missing/incompatible. */
 export function loadIndex(dbPath: string): ExperienceIndex | null {
   let db: Database.Database;
   try {
@@ -141,10 +269,10 @@ export function loadIndex(dbPath: string): ExperienceIndex | null {
   }
 
   try {
-    db.exec(SCHEMA);
     const meta = db
       .prepare(
-        `SELECT indexed_at, provider, model, dimensions, count FROM index_meta WHERE id = 1`
+        `SELECT indexed_at, provider, model, dimensions, count, schema_version
+         FROM index_meta WHERE id = 1`
       )
       .get() as
       | {
@@ -153,23 +281,38 @@ export function loadIndex(dbPath: string): ExperienceIndex | null {
           model: string;
           dimensions: number;
           count: number;
+          schema_version: number;
         }
       | undefined;
 
-    if (!meta) return null;
+    if (!meta || meta.schema_version !== EXPERIENCE_INDEX_SCHEMA_VERSION) {
+      return null;
+    }
 
     const rows = db
-      .prepare(`SELECT id, vector, artifact_json FROM experiences ORDER BY id`)
-      .all() as Array<{ id: string; vector: Buffer; artifact_json: string }>;
+      .prepare(
+        `SELECT id, vector, situation_vector, evidence_vector, artifact_json
+         FROM experiences ORDER BY id`
+      )
+      .all() as Array<{
+        id: string;
+        vector: Buffer;
+        situation_vector: Buffer;
+        evidence_vector: Buffer;
+        artifact_json: string;
+      }>;
 
     const items: IndexedExperience[] = rows.map((row) => ({
       id: row.id,
       vector: decodeVector(row.vector),
+      situationVector: decodeVector(row.situation_vector),
+      evidenceVector: decodeVector(row.evidence_vector),
       artifact: JSON.parse(row.artifact_json) as ExperienceArtifact,
     }));
 
     return {
       indexedAt: meta.indexed_at,
+      schemaVersion: meta.schema_version,
       embedding: {
         provider: meta.provider,
         model: meta.model,
@@ -178,6 +321,9 @@ export function loadIndex(dbPath: string): ExperienceIndex | null {
       count: meta.count,
       items,
     };
+  } catch {
+    // Wrong schema, missing columns, or corrupt file.
+    return null;
   } finally {
     db.close();
   }

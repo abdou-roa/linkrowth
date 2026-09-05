@@ -1,6 +1,9 @@
 import type { ExperienceArtifact } from "../types";
 
-/** Text that gets embedded for retrieval. Deterministic — not model-generated. */
+/**
+ * Combined retrieval text — all semantic fields in one block.
+ * Used by the single-vector strategy (LINKROWTH_RETRIEVAL_STRATEGY=single).
+ */
 export function retrievalText(artifact: ExperienceArtifact): string {
   return [
     artifact.title,
@@ -11,6 +14,40 @@ export function retrievalText(artifact: ExperienceArtifact): string {
     artifact.tradeoff,
     artifact.claimableLine,
     artifact.paths.slice(0, 24).join("\n"),
+  ]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * Situation text — describes the context/problem of the experience.
+ * Answers: "Is this the same kind of situation?"
+ * Used for high-recall candidate generation in the split strategy.
+ */
+export function situationText(artifact: ExperienceArtifact): string {
+  return [
+    artifact.title,
+    artifact.domains.join(", "),
+    artifact.stack.join(", "),
+    artifact.problem,
+  ]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * Evidence text — describes the outcome/result of the experience.
+ * Answers: "Is this experience usable evidence for the intended response?"
+ * Used for post-analysis evidence scoring in the split strategy.
+ * paths intentionally excluded — reserved for the Phase 3 BM25 lexical channel.
+ */
+export function evidenceText(artifact: ExperienceArtifact): string {
+  return [
+    artifact.approach,
+    artifact.tradeoff,
+    artifact.claimableLine,
   ]
     .map((part) => part.trim())
     .filter(Boolean)
