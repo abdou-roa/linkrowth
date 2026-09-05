@@ -103,23 +103,18 @@ signal. `paths` are included here because they carry exact lexical signals
 The BM25 query uses the same `situationQuery` text that feeds the semantic embed
 (`buildRetrievalQuery(post).situationQuery`). No second cleaning pass is needed.
 
-The raw text must be sanitized for FTS5 special characters before passing to
-`MATCH`. A helper `buildFts5Query(text)` strips FTS5 operators and quotes, then
-returns a term-based query (space-separated tokens, no phrase grouping). Phrase
-matching can be revisited if recall suffers.
+Natural post text must be converted into an FTS5 expression without exposing
+query-language syntax. `buildFts5Query(text)` canonicalizes punctuation-heavy
+technology names, removes operators and low-information stopwords, deduplicates
+and caps terms, quotes every MATCH atom, and joins terms with `OR`.
 
 ```ts
-export function buildFts5Query(text: string): string {
-  // Strip FTS5 special characters: " ^ * ( ) [ ] { } : OR AND NOT
-  return text
-    .replace(/["^*()\[\]{}:]/g, " ")
-    .replace(/\b(OR|AND|NOT)\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+buildFts5Query("How do durable redis-streams jobs work in C++?")
+// → "durable" OR "redis-streams" OR "jobs" OR "work" OR "cplusplus"
 ```
 
-Returns `""` on empty input; `rankByLexical` skips the FTS query and returns `[]`.
+The same technology-name normalization is applied to FTS documents at index
+time. Returns `""` when no meaningful terms remain.
 
 ### D4. RRF fusion
 
@@ -143,13 +138,12 @@ selected by benchmark results, not intuition.
 
 ### D5. Post-fusion selection
 
-After RRF, fused candidates are sorted by `rrfScore` descending and passed
-through `evaluateHits()` for safety + top-k selection. For `hybrid`, the
-`minScore` cosine floor does **not** apply — RRF scores are not cosine values.
-`evaluateHits()` is called with `minScore = 0` for the hybrid path. The
-shareability, confidence, and empty-claim filters remain hard constraints.
-
-A post-RRF score threshold is future tuning work (Phase 4+, with labeled data).
+After RRF, fused candidates are sorted by `rrfScore` descending. RRF scores are
+used only for ordering, never compared with the cosine threshold. Hybrid
+admission requires either `situationScore >= minScore` or a lexical rank, so
+weak semantic-only candidates abstain while BM25-only recovery remains
+possible. Shareability, confidence, and empty-claim filters remain hard
+constraints.
 
 ### D6. Strategy flag extension
 
@@ -181,16 +175,18 @@ This preserves recall over aborting.
 
 - FTS5 virtual table `experiences_fts` in the same SQLite file; schema v3
 - `rankByLexical(dbPath, fts5Query, k, bm25Weights?)` in the agent store
-- `buildFts5Query(text)` sanitizer (pure, unit-tested)
+- `buildFts5Query(text)` bounded parser-safe OR query builder (pure, unit-tested)
 - `fuseRRF(semanticHits, lexicalHits, { c })` pure combinator → `FusedCandidate[]`
-- `hybrid` path in `retrieveContext`: embed → semantic candidates + BM25 candidates → RRF → `evaluateHits(minScore=0)` → inject
-- Trace v3: `lexicalRank`, `bm25Score`, `rrfScore` per hit; `rrfC`, `lexicalPoolSize` in params; `lexicalMs` in timings
+- `hybrid` path in `retrieveContext`: embed → semantic candidates + BM25
+  candidates → RRF ordering → semantic-or-lexical admission → safety filters
+- Trace v3: `semanticRank`, `lexicalRank`, `bm25Score`, `rrfScore` per hit;
+  lexical success/fallback diagnostics and RRF parameters; `lexicalMs` timing
 
 ---
 
 ## Work breakdown
 
-### WB1 — Distill: FTS5 index build ⬜
+### WB1 — Distill: FTS5 index build ✅
 
 - `distill/src/types.ts`:
   - Bump `EXPERIENCE_INDEX_SCHEMA_VERSION = 3`.
@@ -214,7 +210,7 @@ This preserves recall over aborting.
   `rankByLexical` (from the distill store or inline SQLite query) and prints hits
   alongside `--channel situation` for debugging.
 
-### WB2 — Agent types ⬜
+### WB2 — Agent types ✅
 
 - `agent/src/context/experience/types.ts`:
   - Bump `EXPERIENCE_INDEX_SCHEMA_VERSION = 3`.
@@ -239,19 +235,20 @@ This preserves recall over aborting.
   - Extend `RetrievalStrategy = "single" | "split" | "hybrid"`.
   - `parseRetrievalStrategy`: map `"hybrid"` or `"3"` → `"hybrid"`.
 
-### WB3 — Agent store: BM25 + RRF ⬜
+### WB3 — Agent store: BM25 + RRF ✅
 
 New exports in `agent/src/context/experience/store.ts`:
 
-- **`buildFts5Query(text: string): string`** — pure sanitizer (unit-tested):
-  strips FTS5 special characters, collapses whitespace, returns term-based query.
-  Returns `""` when nothing remains.
+- **`buildFts5Query(text: string): string`** — pure bounded query builder
+  (unit-tested): canonicalizes technology aliases, removes operators and
+  stopwords, quotes every term, and joins with `OR`. Returns `""` when nothing
+  meaningful remains.
 
 - **`rankByLexical(dbPath: string, fts5Query: string, k: number, bm25Weights?: Bm25Weights): LexicalRankedArtifact[]`** —
   opens the index DB (read-only), queries `experiences_fts` with explicit
   per-column `bm25()` weights, closes DB. Returns at most `k` results ordered by
-  descending BM25 relevance. Returns `[]` on empty query or FTS error (callers
-  decide how to handle).
+  descending BM25 relevance. Returns `[]` on an empty query and throws a typed
+  error on DB/FTS failure.
 
   Default `Bm25Weights`:
   ```ts
@@ -273,7 +270,7 @@ New exports in `agent/src/context/experience/store.ts`:
   pure function (no I/O, no DB). Combines rank lists per D4 formula. Returns
   candidates sorted by `rrfScore` descending.
 
-### WB4 — Agent: retrieval orchestration ⬜
+### WB4 — Agent: retrieval orchestration ✅
 
 `agent/src/context/retrieveContext.ts`:
 
@@ -292,9 +289,11 @@ New exports in `agent/src/context/experience/store.ts`:
   1. Build `fts5Query = buildFts5Query(situationQuery)`.
   2. Embed `situationQuery` → `queryVector` (same as split — one embed call).
   3. `rankBySituation(index, queryVector, semanticPoolSize)` → `semanticHits`.
-  4. `rankByLexical(indexPath, fts5Query, lexicalPoolSize)` → `lexicalHits` (or `[]` on failure, with a logged warning).
+  4. `rankByLexical(indexPath, fts5Query, lexicalPoolSize)` → `lexicalHits`;
+     typed failure is logged/traced and falls back to situation-only.
   5. `fuseRRF(semanticHits, lexicalHits, { c: rrfC })` → `fused`.
-  6. `evaluateHits(fused, { minScore: 0, k })` — RRF scores are not cosine; floor is 0.
+  6. Admit when situation cosine clears the floor or a lexical rank exists;
+     then apply hard safety filters and top-k.
   7. Inject surviving claimable lines; emit trace.
 
 - **Graceful FTS5 fallback:** if `rankByLexical` throws, log a warning and
@@ -312,12 +311,13 @@ New exports in `agent/src/context/experience/store.ts`:
   - `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` continues as semantic pool for `split`
     and `hybrid`.
 
-### WB5 — Traces: v3 ⬜
+### WB5 — Traces: v3 ✅
 
 - `agent/src/persistence/retrievalTrace/types.ts`:
   - Bump `RETRIEVAL_TRACE_SCHEMA_VERSION = 3`.
   - `RetrievalTraceHit`:
     ```ts
+    semanticRank?: number;   // 1-indexed position in situation list
     lexicalRank?: number;    // 1-indexed position in BM25 list (hybrid strategy)
     bm25Score?: number;      // raw SQLite bm25() value (negative)
     rrfScore?: number;       // RRF combined score (hybrid strategy)
@@ -338,7 +338,7 @@ New exports in `agent/src/context/experience/store.ts`:
   timings.lexicalMs               number | undefined
   ```
 
-### WB6 — Docs ⬜
+### WB6 — Docs ✅
 
 - `docs/retrieval-layer.md`: add FTS5 schema, lexical document assembly,
   BM25 query structure, RRF formula, new env vars, updated overview flow diagram.
@@ -363,9 +363,9 @@ service.
 
 ## Testing strategy
 
-- **Unit — `buildFts5Query`:** strips FTS5 special characters; handles empty
-  string; handles OR/AND/NOT keywords; preserves normal tech terms like
-  "postgres", "redis-streams", "FTS5".
+- **Unit — `buildFts5Query`:** handles natural punctuation and operator words,
+  canonicalizes punctuation-sensitive technology names, deduplicates/caps
+  terms, and produces parser-safe quoted OR expressions.
 - **Unit — `fuseRRF`:** correct RRF formula (`1/(c + rank)`, 1-indexed); one-channel-only
   candidates; empty lists; tie-breaking stable; `c=60` baseline.
 - **Integration — `rankByLexical`:** needs a real SQLite file with FTS5 rows.

@@ -294,6 +294,12 @@ A candidate that ranks well in both channels rises above candidates supported
 by only one weak signal. Candidates present in only one list can still survive,
 which preserves recall.
 
+Until Phase 4 calibrates a final reranker, RRF is an ordering signal rather than
+an acceptance threshold. Hybrid admission requires either a situation cosine
+above the configured semantic floor or presence in the lexical ranking. This
+prevents unrelated semantic-only pool entries from becoming proof points merely
+because every RRF contribution is positive.
+
 The rank constant `c`, per-channel candidate counts, and tie-breaking rules
 must be explicit configuration recorded in retrieval traces and selected by
 benchmark results.

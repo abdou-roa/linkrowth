@@ -14,15 +14,17 @@ OFFLINE (distill/)
         ↓ retrievalText() / situationText() / evidenceText() per artifact
         ↓ embed() — RETRIEVAL_DOCUMENT (Gemini) or standard embed (OpenAI)
         ↓ Float32 vectors (combined + situation + evidence) + artifact JSON
-  experience-index.db (SQLite, schema_version=2)
+        ↓ FTS5 lexical fields (title, domains, stack, problem, approach, paths)
+  experience-index.db (SQLite, schema_version=3)
 
 ONLINE (agent/)
   post.text
         ↓ buildRetrievalQuery() → { situationQuery, headline }
         ↓ embedQuery(situationQuery) — RETRIEVAL_QUERY (Gemini) or same embed API (OpenAI)
         ↓ query vector
-        ↓ rankIndex() [single] or rankBySituation() [split]
-        ↓ evaluateHits() — filter, top-k
+        ↓ rankIndex() [single], rankBySituation() [split],
+          or situation cosine + BM25 → RRF [hybrid]
+        ↓ strategy-aware relevance admission + evaluateHits() safety filters
         ↓ claimableLines → UserContext.proofPoints
         ↓ engage(post, enrichedContext)
 ```
@@ -105,8 +107,8 @@ function evidenceText(artifact: ExperienceArtifact): string {
 }
 ```
 
-**Answers:** "Is this experience usable as evidence?" `paths` are excluded —
-reserved for the Phase 3 BM25 lexical channel. In Phase 2, the evidence vector
+**Answers:** "Is this experience usable as evidence?" `paths` are excluded and
+indexed by the Phase 3 BM25 lexical channel instead. The evidence vector
 is scored for trace annotation only; it does not gate selection.
 
 **Excluded from all embeddings:** `id`, `source`, `repo`, `implementationDate`,
@@ -158,7 +160,7 @@ Using `embed()` at query time with Gemini will produce systematically worse scor
 6. Persist to a fresh sibling SQLite file via `saveIndex()`, then atomically
    replace the live index only after schema, metadata, and every row commit
 
-### SQLite schema (v2)
+### SQLite schema (v3)
 
 File: `distill/data/experience-index.db`
 
@@ -170,7 +172,7 @@ CREATE TABLE index_meta (
   model TEXT NOT NULL,
   dimensions INTEGER NOT NULL,
   count INTEGER NOT NULL,
-  schema_version INTEGER NOT NULL DEFAULT 2
+  schema_version INTEGER NOT NULL DEFAULT 3
 );
 
 CREATE TABLE experiences (
@@ -180,9 +182,20 @@ CREATE TABLE experiences (
   evidence_vector BLOB NOT NULL,   -- evidenceText() — split strategy evidence scoring
   artifact_json TEXT NOT NULL
 );
+
+CREATE VIRTUAL TABLE experiences_fts USING fts5(
+  id UNINDEXED,
+  title,
+  domains,
+  stack,
+  problem,
+  approach,
+  paths,
+  tokenize = 'unicode61'
+);
 ```
 
-`schema_version` constant: `EXPERIENCE_INDEX_SCHEMA_VERSION = 2`.
+`schema_version` constant: `EXPERIENCE_INDEX_SCHEMA_VERSION = 3`.
 
 | Column | Purpose |
 | --- | --- |
@@ -191,6 +204,7 @@ CREATE TABLE experiences (
 | `experiences.situation_vector` | Situation text — split strategy candidate gen |
 | `experiences.evidence_vector` | Evidence text — split strategy evidence annotation |
 | `experiences.artifact_json` | Full artifact for read-back — not what was embedded |
+| `experiences_fts` | Per-field lexical document used by BM25 in hybrid retrieval |
 
 **No ANN index.** Brute-force cosine over all rows after load.
 
@@ -253,6 +267,7 @@ vector column is scored:
 | --- | --- | --- | --- |
 | `single` (default) | `single` | `vector` (combined `retrievalText`) | Baseline |
 | `split` | `split` | `situation_vector` (`situationText`) | Phase 2 |
+| `hybrid` | `hybrid` | Situation cosine + FTS5 BM25, fused by rank | Phase 3 |
 
 **`single`** (default): unchanged behavior — one cosine score over all embedded fields.
 
@@ -261,7 +276,20 @@ configurable via `LINKROWTH_RETRIEVAL_CANDIDATE_POOL`). Evidence cosine is
 computed and written to traces when `analysis` is available, but does not gate
 selection in Phase 2. Production selection is identical to `single` in Phase 2.
 
-Only schema v2 indexes are accepted. Run `npm run index` (distill/) after
+**`hybrid`**: independently ranks situation vectors and bounded, parser-safe
+FTS5 terms, then combines their 1-indexed positions with Reciprocal Rank Fusion:
+
+```text
+rrf = 1 / (c + semanticRank) + 1 / (c + lexicalRank)
+```
+
+RRF controls ordering, not admission. A candidate is relevant enough when its
+situation cosine clears `LINKROWTH_RETRIEVAL_MIN_SCORE` or BM25 recovered it.
+This prevents weak semantic-only candidates from bypassing abstention while
+retaining lexical-only recovery. FTS failures are logged and traced before
+falling back to situation-only candidates.
+
+Only schema v3 indexes are accepted. Run `npm run index` (distill/) after
 upgrading; older index files are rejected and retrieval falls back to static
 context with an explicit rebuild warning. Missing, incompatible, corrupt, and
 empty index states are reported separately.
@@ -354,9 +382,12 @@ Comment from `select.ts`: *"irrelevant hits are actively harmful"*. Low-similari
 4. queryVector = await embedQuery(situationQuery)
    → failure? log warning, return baseContext unchanged
 
-5. rawHits = rankIndex(index, queryVector, k * 3)
+5. Generate candidates for the selected strategy:
+   - single: combined-vector cosine
+   - split: situation cosine
+   - hybrid: situation cosine + BM25 → RRF
 
-6. selected = selectClaimableHits(rawHits, { minScore, k })
+6. Apply strategy-aware relevance admission, safety filters, and top-k
 
 7. mergeProofPoints(baseContext.proofPoints, claimableLines)
    → return enriched UserContext
@@ -382,8 +413,8 @@ npm run search -- "postgres background jobs reliability"
 1. Load `experience-index.db`
 2. Warn on provider mismatch
 3. `embedQuery(query)`
-4. Rank the selected `--channel single|situation|evidence` vector column;
-   default `SEARCH_K=5`
+4. Rank `--channel single|situation|evidence` by cosine or
+   `--channel lexical` by FTS5 BM25; default `SEARCH_K=5`
 5. Print title, score, repo, shareability, confidence, claimableLine, domains
 
 **Difference from agent:** CLI does **not** run `selectClaimableHits` (no shareability/confidence/minScore filters). Use it to inspect raw cosine scores.
@@ -404,8 +435,10 @@ Full parameter reference (env vars, overrides, filters, examples):
 | `LINKROWTH_RETRIEVAL_K` | `5` | Max proof points after filtering |
 | `LINKROWTH_RETRIEVAL_MIN_SCORE` | `0.3` | Cosine score floor |
 | `LINKROWTH_RETRIEVAL_QUERY_CONSTRUCTION` | `a` | Query construction: `a` (Tier A cleaning) or `raw` (headline+body blob) |
-| `LINKROWTH_RETRIEVAL_STRATEGY` | `single` | `single` (combined vector baseline) or `split` (situation vector + evidence annotation) |
-| `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` | `k * 4` | Situation-channel recall pool (split strategy only) |
+| `LINKROWTH_RETRIEVAL_STRATEGY` | `single` | `single`, `split`, or `hybrid` |
+| `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` | `k * 4` | Situation-channel pool for split/hybrid |
+| `LINKROWTH_RETRIEVAL_LEXICAL_POOL` | `k * 4` | BM25 pool for hybrid |
+| `LINKROWTH_RETRIEVAL_RRF_C` | `60` | Reciprocal Rank Fusion constant |
 | `SEARCH_K` | `5` | Top hits for `npm run search` (distill CLI) |
 
 Also required: the matching provider API key (`OPENAI_API_KEY` or `GEMINI_API_KEY`).
@@ -424,6 +457,7 @@ Also required: the matching provider API key (`OPENAI_API_KEY` or `GEMINI_API_KE
 | `retrieval injected 0 proof point(s)` | Empty query, missing index, embed failure, or filters removed all hits — check logs for `[retrieveContext]` |
 | Good CLI scores, bad agent results | Agent filters (`minScore`, shareability, confidence) — CLI skips these |
 | Gemini scores worse after config change | Confirm query uses `embedQuery()` (RETRIEVAL_QUERY), not `embed()` |
+| Hybrid behaves like split | Inspect `params.lexicalChannel`; FTS failure records a situation-only fallback |
 
 ### Inspect index metadata
 

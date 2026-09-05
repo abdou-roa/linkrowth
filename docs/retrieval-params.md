@@ -40,10 +40,12 @@ embedded.
 
 | Variable | Default | Values | Effect |
 | --- | --- | --- | --- |
-| `LINKROWTH_RETRIEVAL_STRATEGY` | `single` | `single` → combined `vector`<br>`split`, `2` → `situation_vector` | Which index column cosine-ranks against at query time. |
+| `LINKROWTH_RETRIEVAL_STRATEGY` | `single` | `single` → combined `vector`<br>`split`, `2` → `situation_vector`<br>`hybrid`, `3` → situation cosine + BM25 + RRF | Candidate-generation strategy. |
 | `LINKROWTH_RETRIEVAL_K` | `5` | positive integer | Max proof points injected **after** post-rank filters. |
-| `LINKROWTH_RETRIEVAL_MIN_SCORE` | `0.3` | float | Cosine score floor. Hits below this are dropped. |
-| `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` | `k × 4` | positive integer | **Split strategy only.** Situation-channel recall pool size before eligibility filters and the `k` cap. |
+| `LINKROWTH_RETRIEVAL_MIN_SCORE` | `0.3` | float | Cosine floor for single/split and the semantic admission floor for hybrid. Hybrid candidates also pass admission when BM25 recovered them. |
+| `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` | `k × 4` | positive integer | Situation-channel recall pool for split and hybrid. |
+| `LINKROWTH_RETRIEVAL_LEXICAL_POOL` | `k × 4` | positive integer | BM25 pool for hybrid. |
+| `LINKROWTH_RETRIEVAL_RRF_C` | `60` | positive integer | RRF rank constant for hybrid ordering. |
 
 **Pool sizes not exposed as env vars:**
 
@@ -51,12 +53,14 @@ embedded.
 | --- | --- | --- |
 | `single` | `max(k × 3, k)` | hardcoded in `retrieveContext.ts` |
 | `split` | `max(candidatePoolSize, k)` | `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` or `k × 4` |
+| `hybrid` semantic | `max(candidatePoolSize, k)` | `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` or `k × 4` |
+| `hybrid` lexical | `lexicalPoolSize` | `LINKROWTH_RETRIEVAL_LEXICAL_POOL` or `k × 4` |
 
 ### Index and embedding
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `LINKROWTH_EXPERIENCE_INDEX_DB` | `../distill/data/experience-index.db` (relative to agent root) | Path to the SQLite experience index. **Schema v2 required** — v1 indexes are rejected and retrieval falls back to static context. |
+| `LINKROWTH_EXPERIENCE_INDEX_DB` | `../distill/data/experience-index.db` (relative to agent root) | Path to the SQLite experience index. **Schema v3 required** — older indexes are rejected and retrieval falls back to static context. |
 | `LINKROWTH_PROVIDER` | `openai` | Active LLM provider for query embedding: `openai` or `gemini`. Must match the provider used when the index was built. |
 | `LINKROWTH_OPENAI_EMBED_MODEL` | `text-embedding-3-small` | OpenAI embedding model for `embedQuery()` at retrieval time. |
 | `LINKROWTH_GEMINI_EMBED_MODEL` | `gemini-embedding-001` | Gemini embedding model for `embedQuery()` at retrieval time. |
@@ -85,10 +89,12 @@ wired through `runEngageWithStatus` today.
 | Option | Type | Env equivalent | Effect |
 | --- | --- | --- | --- |
 | `queryConstruction` | `"raw"` \| `"a"` | `LINKROWTH_RETRIEVAL_QUERY_CONSTRUCTION` | Query construction tier. |
-| `strategy` | `"single"` \| `"split"` | `LINKROWTH_RETRIEVAL_STRATEGY` | Retrieval strategy. |
+| `strategy` | `"single"` \| `"split"` \| `"hybrid"` | `LINKROWTH_RETRIEVAL_STRATEGY` | Retrieval strategy. |
 | `k` | `number` | `LINKROWTH_RETRIEVAL_K` | Max hits after filtering. |
 | `minScore` | `number` | `LINKROWTH_RETRIEVAL_MIN_SCORE` | Cosine score floor. |
 | `candidatePoolSize` | `number` | `LINKROWTH_RETRIEVAL_CANDIDATE_POOL` | Split-strategy recall pool. |
+| `lexicalPoolSize` | `number` | `LINKROWTH_RETRIEVAL_LEXICAL_POOL` | Hybrid BM25 pool. |
+| `rrfC` | `number` | `LINKROWTH_RETRIEVAL_RRF_C` | Hybrid RRF constant. |
 | `indexPath` | `string` | `LINKROWTH_EXPERIENCE_INDEX_DB` | Override index file path. |
 | `analysis` | `AnalysisArtifact` | — | **Split only.** Enables evidence-cosine trace annotation via `buildEvidenceQuery()`. Does not affect selection in Phase 2. |
 | `embedQuery` | function | — | Test double for embedding. |
@@ -127,7 +133,8 @@ Same embedding provider vars apply at index-build time:
 
 Each artifact is embedded as three vectors: combined (`retrievalText`),
 situation (`situationText`), and evidence (`evidenceText`). Index schema
-version is `2` (`EXPERIENCE_INDEX_SCHEMA_VERSION`).
+version is `3` (`EXPERIENCE_INDEX_SCHEMA_VERSION`) and includes the
+`experiences_fts` BM25 index.
 
 ### Distill search CLI
 
@@ -152,9 +159,14 @@ When traces are recorded, active knobs appear in `RetrievalTrace.params`:
     "rawLength": 142,
     "constructedLength": 118
   },
-  "candidatePoolSize": 20   // present when strategy=split
+  "candidatePoolSize": 20
 }
 ```
+
+Hybrid traces additionally record `semanticPoolSize`, `lexicalPoolSize`,
+`rrfC`, `bm25Weights`, `hybridAdmission`, and `lexicalChannel`. The last field
+distinguishes a valid zero-hit BM25 search from a skipped or failed search and
+records situation-only fallback.
 
 Query text fields on the trace:
 
@@ -164,7 +176,7 @@ Query text fields on the trace:
 | `query.headline` | Author headline (never embedded) |
 | `query.evidenceText` | `buildEvidenceQuery()` output — split strategy only, when `analysis` is available |
 
-Trace schema version: `RETRIEVAL_TRACE_SCHEMA_VERSION = 2`.
+Trace schema version: `RETRIEVAL_TRACE_SCHEMA_VERSION = 3`.
 
 ---
 
@@ -182,7 +194,7 @@ LINKROWTH_RETRIEVAL_MIN_SCORE=0.3
 
 ### Phase 2 split evaluation
 
-Requires a schema-v2 index rebuild (`cd distill && npm run index`).
+Requires a schema-v3 index rebuild (`cd distill && npm run index`).
 
 ```bash
 LINKROWTH_RETRIEVAL_QUERY_CONSTRUCTION=a
@@ -194,6 +206,21 @@ LINKROWTH_RETRIEVAL_CANDIDATE_POOL=20   # optional; default k×4 = 20 when k=5
 
 Selection behavior is unchanged from `single` in Phase 2; split adds
 `situationScore` / `evidenceScore` to traces when analysis is supplied.
+
+### Phase 3 hybrid evaluation
+
+```bash
+LINKROWTH_RETRIEVAL_STRATEGY=hybrid
+LINKROWTH_RETRIEVAL_K=5
+LINKROWTH_RETRIEVAL_MIN_SCORE=0.3
+LINKROWTH_RETRIEVAL_CANDIDATE_POOL=20
+LINKROWTH_RETRIEVAL_LEXICAL_POOL=20
+LINKROWTH_RETRIEVAL_RRF_C=60
+```
+
+The lexical query is a bounded OR expression of parser-safe meaningful terms.
+RRF orders candidates; semantic-floor or lexical-match admission controls
+abstention.
 
 ### Pre–Tier A baseline (A/B)
 
