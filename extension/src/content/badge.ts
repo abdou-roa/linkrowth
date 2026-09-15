@@ -76,10 +76,17 @@ function mountBadge(card: HTMLElement, badge: HTMLElement): void {
   }
 }
 
-/** Outer feed shell when present — where the ··· menu usually lives. */
+/** Outer feed / search shell when present — where the ··· menu usually lives. */
 function badgeRoot(card: HTMLElement): HTMLElement {
   const outer = card.closest(
-    'div[role="listitem"][componentkey*="FeedType"], article[data-id="main-feed-card"]',
+    [
+      "li.reusable-search__result-container",
+      'div[role="listitem"][componentkey*="FeedType"]',
+      'div[role="listitem"]',
+      'article[data-id="main-feed-card"]',
+      "[data-chameleon-result-urn]",
+      "li.profile-creator-shared-feed-update__container",
+    ].join(", "),
   );
   return outer instanceof HTMLElement ? outer : card;
 }

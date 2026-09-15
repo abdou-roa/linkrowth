@@ -94,10 +94,17 @@ async function openCommentBox(card: HTMLElement): Promise<boolean> {
   return !!editor;
 }
 
-/** Outer listitem when present — comment box often mounts there. */
+/** Outer listitem / search result when present — comment box often mounts there. */
 function composerRoot(card: HTMLElement): HTMLElement {
   const outer = card.closest(
-    'div[role="listitem"][componentkey*="FeedType"], article[data-id="main-feed-card"]',
+    [
+      "li.reusable-search__result-container",
+      'div[role="listitem"][componentkey*="FeedType"]',
+      'div[role="listitem"]',
+      'article[data-id="main-feed-card"]',
+      "[data-chameleon-result-urn]",
+      "li.profile-creator-shared-feed-update__container",
+    ].join(", "),
   );
   return outer instanceof HTMLElement ? outer : card;
 }
@@ -151,7 +158,16 @@ function resolveTaggedCard(from: Element): HTMLElement | null {
   if (tagged) return tagged;
 
   const outer = from.closest(
-    'div[role="listitem"][componentkey*="FeedType"], article[data-id="main-feed-card"], div.feed-shared-update-v2, article.feed-shared-update-v2',
+    [
+      "li.reusable-search__result-container",
+      'div[role="listitem"][componentkey*="FeedType"]',
+      'div[role="listitem"]',
+      'article[data-id="main-feed-card"]',
+      "[data-chameleon-result-urn]",
+      "li.profile-creator-shared-feed-update__container",
+      "div.feed-shared-update-v2",
+      "article.feed-shared-update-v2",
+    ].join(", "),
   );
   if (!(outer instanceof HTMLElement)) return null;
   return outer.querySelector<HTMLElement>("[data-linkrowth-post-id]");

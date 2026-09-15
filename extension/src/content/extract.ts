@@ -744,12 +744,19 @@ export function usernameFromProfileUrl(url: string): string | undefined {
 }
 
 /**
- * Social counts / age often live on the outer listitem while we observe an inner
- * `feed-full-update` node — prefer the outer shell when present.
+ * Social counts / age often live on the outer listitem / search result while we
+ * observe an inner `feed-full-update` node — prefer the outer shell when present.
  */
 function extractionRoot(card: HTMLElement): HTMLElement {
   const outer = card.closest(
-    'div[role="listitem"][componentkey*="FeedType"], article[data-id="main-feed-card"]',
+    [
+      "li.reusable-search__result-container",
+      'div[role="listitem"][componentkey*="FeedType"]',
+      'div[role="listitem"]',
+      'article[data-id="main-feed-card"]',
+      "[data-chameleon-result-urn]",
+      "li.profile-creator-shared-feed-update__container",
+    ].join(", "),
   );
   return outer instanceof HTMLElement ? outer : card;
 }
@@ -936,14 +943,16 @@ function collectSnowflakeIds(
   push(root.getAttribute("data-id"));
   push(root.getAttribute("componentkey"));
   push(root.getAttribute("data-activity-urn"));
+  push(root.getAttribute("data-chameleon-result-urn"));
 
   for (const el of root.querySelectorAll(
-    "[data-urn], [data-id], [componentkey], a[href*='activity'], a[href*='ugcPost'], a[href*='feed/update']",
+    "[data-urn], [data-id], [componentkey], [data-chameleon-result-urn], a[href*='activity'], a[href*='ugcPost'], a[href*='feed/update']",
   )) {
     if (!(el instanceof HTMLElement)) continue;
     push(el.getAttribute("data-urn"));
     push(el.getAttribute("data-id"));
     push(el.getAttribute("componentkey"));
+    push(el.getAttribute("data-chameleon-result-urn"));
     if (el instanceof HTMLAnchorElement) push(el.href);
   }
 
@@ -1305,7 +1314,12 @@ function extractUrl(card: HTMLElement): string | undefined {
 
 /** Raw update URN (activity / ugcPost / share) used to rebuild a permalink. */
 function extractPostUrn(root: HTMLElement): string | undefined {
-  const attrs = ["data-urn", "data-id", "componentkey"];
+  const attrs = [
+    "data-chameleon-result-urn",
+    "data-urn",
+    "data-id",
+    "componentkey",
+  ];
   const urnPattern = /urn:li:(?:activity|ugcPost|share):\d{15,22}/i;
 
   const fromAttr = (el: Element): string | undefined => {
@@ -1319,7 +1333,9 @@ function extractPostUrn(root: HTMLElement): string | undefined {
   const own = fromAttr(root);
   if (own) return own;
 
-  for (const el of root.querySelectorAll("[data-urn], [data-id], [componentkey]")) {
+  for (const el of root.querySelectorAll(
+    "[data-chameleon-result-urn], [data-urn], [data-id], [componentkey]",
+  )) {
     const found = fromAttr(el);
     if (found) return found;
   }
@@ -1332,6 +1348,18 @@ function extractId(
   url: string | undefined,
   text: string,
 ): string | null {
+  const chameleonUrn =
+    card.getAttribute("data-chameleon-result-urn") ||
+    card
+      .closest("[data-chameleon-result-urn]")
+      ?.getAttribute("data-chameleon-result-urn");
+  if (
+    chameleonUrn &&
+    /urn:li:(?:activity|ugcPost|share):\d{15,22}/i.test(chameleonUrn)
+  ) {
+    return chameleonUrn;
+  }
+
   const componentKey =
     card.getAttribute("componentkey") ||
     card.closest("[componentkey]")?.getAttribute("componentkey");
