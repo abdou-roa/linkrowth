@@ -5,8 +5,18 @@ import {
   pauseSuggestionJobForClarification,
 } from "@linkrowth/db";
 import { multiStepEngageAgent } from "../agents/multiStepEngage";
+import type { AgentRunInput } from "../agents/types";
 import { loadUserContext } from "../context/loadUserContext";
 import { retrieveContext } from "../context/retrieveContext";
+import {
+  generateCandidates,
+  isCandidateShortlist,
+  type CandidateShortlist,
+} from "../context/retrievalCandidates";
+import {
+  AnalysisAwareRetrievalError,
+  selectForAnalysis,
+} from "../context/experience/rerank";
 import type { Post, UserContext } from "../core/types";
 import type { AnalysisArtifact, HumanClarification } from "../steps/types";
 import { createPostgresRunRepository } from "./postgresRepository";
@@ -39,6 +49,34 @@ export interface RunEngageOptions {
   clarification?: HumanClarification;
   /** Analysis checkpoint used with an answered clarification on resume. */
   analysis?: AnalysisArtifact;
+  /** Phase 4 pipeline override. Defaults to LINKROWTH_RETRIEVAL_PIPELINE or legacy. */
+  retrievalPipeline?: RetrievalPipeline;
+  /** Candidate checkpoint supplied on HITL resume. */
+  retrievalShortlist?: CandidateShortlist;
+  /** Test seams for deterministic retrieval orchestration. */
+  generateCandidates?: typeof generateCandidates;
+  selectForAnalysis?: typeof selectForAnalysis;
+  legacyRetrieveContext?: typeof retrieveContext;
+}
+
+export type RetrievalPipeline = "legacy" | "analysis_aware";
+
+export function parseRetrievalPipeline(
+  raw: string | undefined
+): RetrievalPipeline {
+  const value = raw?.trim().toLowerCase();
+  return value === "analysis_aware" || value === "analysis-aware" || value === "4"
+    ? "analysis_aware"
+    : "legacy";
+}
+
+export function resolveRetrievalPipeline(
+  override?: RetrievalPipeline
+): RetrievalPipeline {
+  return (
+    override ??
+    parseRetrievalPipeline(process.env.LINKROWTH_RETRIEVAL_PIPELINE)
+  );
 }
 
 export type RunEngageOutcome =
@@ -86,11 +124,37 @@ export async function runEngageWithStatus(
     options.traceRepository ?? createRetrievalTraceRepository();
 
   // Context chokepoint: callers that pass context skip retrieval (tests / overrides).
-  // Otherwise load the static persona and enrich it from the experience index.
-  // Retrieval emits a trace through a capturing sink; we persist it after the run
-  // so it can link to the run id — see the finally block below.
+  // Legacy mode enriches immediately. Phase 4 generates candidates now but
+  // finalizes context only after analyzer/HITL synchronization.
   let context: UserContext;
   let capturedTrace: RetrievalTrace | undefined;
+  let retrievalShortlist = isCandidateShortlist(options.retrievalShortlist)
+    ? options.retrievalShortlist
+    : undefined;
+  let prepareContext: AgentRunInput["prepareContext"];
+
+  const runLegacyRetrieval = async (
+    baseContext: UserContext,
+    fallbackReason?: string
+  ): Promise<UserContext> => {
+    const legacyRetrieve = options.legacyRetrieveContext ?? retrieveContext;
+    const enriched = await legacyRetrieve(post, baseContext, {
+      traceSink: {
+        record: (trace) => {
+          capturedTrace = {
+            ...trace,
+            params: {
+              ...trace.params,
+              pipeline: fallbackReason ? "legacy_fallback" : "legacy",
+              ...(fallbackReason ? { fallbackReason } : {}),
+            },
+          };
+        },
+      },
+    });
+    return enriched;
+  };
+
   if (options.context) {
     context = options.context;
     console.log(
@@ -98,23 +162,101 @@ export async function runEngageWithStatus(
     );
   } else {
     const baseContext = loadUserContext();
-    context = await retrieveContext(post, baseContext, {
-      traceSink: {
-        record: (trace) => {
-          capturedTrace = trace;
-        },
-      },
-    });
-    const baseProofKeys = new Set(
-      (baseContext.proofPoints ?? []).map((line) => line.trim().toLowerCase())
-    );
-    const injected = (context.proofPoints ?? []).filter(
-      (line) => !baseProofKeys.has(line.trim().toLowerCase())
-    );
-    console.log(
-      `[runEngage] retrieval injected ${injected.length} proof point(s) before agent run:`,
-      injected.length > 0 ? injected : "(none — static user.json only)"
-    );
+    const pipeline = resolveRetrievalPipeline(options.retrievalPipeline);
+    if (pipeline === "legacy") {
+      context = await runLegacyRetrieval(baseContext);
+      const baseProofKeys = new Set(
+        (baseContext.proofPoints ?? []).map((line) =>
+          line.trim().toLowerCase()
+        )
+      );
+      const injected = (context.proofPoints ?? []).filter(
+        (line) => !baseProofKeys.has(line.trim().toLowerCase())
+      );
+      console.log(
+        `[runEngage] legacy retrieval injected ${injected.length} proof point(s) before agent run:`,
+        injected.length > 0 ? injected : "(none — static user.json only)"
+      );
+    } else {
+      context = baseContext;
+      const generate = options.generateCandidates ?? generateCandidates;
+      const select = options.selectForAnalysis ?? selectForAnalysis;
+      if (!retrievalShortlist) {
+        try {
+          retrievalShortlist = await generate(post);
+        } catch (error) {
+          console.warn(
+            "[runEngage] candidate generation failed; using legacy fallback:",
+            error instanceof Error ? error.message : error
+          );
+        }
+      }
+
+      if (!retrievalShortlist) {
+        context = await runLegacyRetrieval(
+          baseContext,
+          "candidate_generation_failed"
+        );
+      } else if (retrievalShortlist.status !== "ready") {
+        context = await runLegacyRetrieval(
+          baseContext,
+          `candidate_${retrievalShortlist.status}`
+        );
+      } else {
+        prepareContext = async ({
+          analysis,
+          clarification,
+        }): Promise<UserContext> => {
+          try {
+            const selection = await select(
+              post,
+              analysis,
+              clarification,
+              retrievalShortlist!,
+              baseContext
+            );
+            capturedTrace = selection.trace;
+            return selection.context;
+          } catch (error) {
+            let failure: unknown = error;
+            if (
+              error instanceof AnalysisAwareRetrievalError &&
+              error.reason === "stale_shortlist"
+            ) {
+              try {
+                retrievalShortlist = await generate(post);
+                if (retrievalShortlist.status === "ready") {
+                  const selection = await select(
+                    post,
+                    analysis,
+                    clarification,
+                    retrievalShortlist,
+                    baseContext
+                  );
+                  capturedTrace = selection.trace;
+                  return selection.context;
+                }
+                failure = new AnalysisAwareRetrievalError(
+                  "shortlist_not_ready",
+                  `regenerated shortlist status is ${retrievalShortlist.status}`
+                );
+              } catch (retryError) {
+                failure = retryError;
+              }
+            }
+
+            const reason =
+              failure instanceof AnalysisAwareRetrievalError
+                ? failure.reason
+                : "analysis_aware_failed";
+            console.warn(
+              `[runEngage] analysis-aware retrieval failed (${reason}); using legacy fallback`
+            );
+            return runLegacyRetrieval(baseContext, reason);
+          }
+        };
+      }
+    }
   }
   const repository = options.repository ?? createPostgresRunRepository();
   const { jobId } = options;
@@ -135,6 +277,7 @@ export async function runEngageWithStatus(
       context,
       clarification: options.clarification,
       analysis: options.analysis,
+      prepareContext,
     });
 
     if (outcome.status === "awaiting_clarification") {
@@ -149,6 +292,7 @@ export async function runEngageWithStatus(
           analysis: outcome.analysis,
           clarification: outcome.clarification,
           steps: outcome.steps,
+          retrievalShortlist,
         });
       }
 

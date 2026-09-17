@@ -589,13 +589,33 @@ harness.
 
 ### Phase 4: add structured reranking
 
-- split pre-analysis candidate generation from post-analysis selection;
+- split pre-analysis candidate generation from post-analysis selection; ✅
 - add a multi-step synchronization stage after analyzer/HITL and before
-  drafter;
+  drafter; ✅
 - rerank with the original post, structured analysis, and deterministic,
-  observable ranking signals;
-- calibrate selection and abstention by provider/model;
-- verify resume behavior with checkpointed analysis and clarification.
+  observable ranking signals; ✅
+- add a provisional evidence floor and explicit abstention behind a default-off
+  `LINKROWTH_RETRIEVAL_PIPELINE=analysis_aware` flag; ✅
+- checkpoint the serializable shortlist and reuse it only when post and index
+  fingerprints still match; include an answered clarification as relevance
+  intent on resume; ✅
+- compare legacy `single` with the complete Phase 4 path on the checked-in
+  deterministic fixture before considering Phase 5. ✅
+
+Phase 4 ordering is fixed and inspectable: evidence cosine descending, exact
+domain/stack overlap descending, Phase 3 RRF descending, then artifact ID
+ascending. Existing eligibility rules and generation relevance still gate
+admission, and `LINKROWTH_RETRIEVAL_EVIDENCE_MIN_SCORE` adds the final evidence
+gate. Analysis and clarification guide relevance only; factual proof still
+comes exclusively from the indexed artifact's claimable line.
+
+The six-row frozen CI fixture passes the Phase 4 completion gates: candidate
+recall remains `1.0`, final precision@k improves from `0.667` to `1.0`,
+angle-conditioned precision improves from `0.0` to `1.0`, and both safety
+exclusion and no-match abstention remain `1.0`. This fixture validates
+determinism and integration rather than production calibration. Phase 5 stays
+deferred until a larger labeled set exposes a repeatable ranking failure that
+these deterministic signals cannot resolve.
 
 ### Phase 5: consider a model reranker
 

@@ -10,7 +10,8 @@
     "prebuild": "npm run build --prefix ../agent",
     "start": "node dist/index.js",
     "predev": "npm run build --prefix ../agent",
-    "dev": "tsx watch src/index.ts"
+    "dev": "tsx watch src/index.ts",
+    "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
     "@linkrowth/agent": "file:../agent",

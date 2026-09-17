@@ -1,0 +1,23 @@
+-- Retrieval trace schema v4 (Phase 4: analysis-aware reranking).
+--
+-- No DDL changes are required. Phase 4 continues to use the existing JSONB
+-- params, candidates, and timings columns. query_evidence_text was added by
+-- migration 0004 and stores the analysis/clarification-derived relevance query.
+--
+-- v4 payload additions:
+--   outcome                               "abstained"
+--   candidates[].evidenceScore            number | undefined
+--   candidates[].signals                  deterministic signal provenance
+--   candidates[].dropReason               generation_relevance | evidence_score
+--                                         | missing_index_item | duplicate_claim
+--   params.pipeline                       "analysis_aware" | "legacy" | "legacy_fallback"
+--   params.shortlistVersion               number
+--   params.postFingerprint                string
+--   params.minSituationScore              number
+--   params.minEvidenceScore               number
+--   params.ordering                       string
+--   params.evidenceQueryProvenance        object
+--   params.abstentionReason               string | undefined
+--   params.fallbackReason                 string | undefined
+--   timings.candidateGenerationMs         number | undefined
+--   timings.rerankMs                      number | undefined

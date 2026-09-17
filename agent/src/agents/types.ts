@@ -17,6 +17,16 @@ export interface AgentRunInput {
   clarification?: HumanClarification;
   /** Analysis checkpoint used with an answered clarification on resume. */
   analysis?: AnalysisArtifact;
+  /**
+   * Run-scoped deterministic synchronization hook. Called only after analysis
+   * (and any clarification) is complete, immediately before drafting.
+   */
+  prepareContext?: (input: {
+    post: Post;
+    analysis: AnalysisArtifact;
+    clarification?: HumanClarification;
+    context: UserContext;
+  }) => Promise<UserContext>;
 }
 
 export type AgentRunStatus = "completed" | "awaiting_clarification";
